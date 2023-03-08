@@ -193,7 +193,7 @@ func TestAddHeaderMiddleware(t *testing.T) {
 				ts.URL,
 				tc.input,
 				200*time.Millisecond,
-				defaultInvalidStatusCodeValidator,
+				DefaultInvalidStatusCodeValidator,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -221,7 +221,7 @@ func TestAddHeaderContext(t *testing.T) {
 		ts.URL,
 		linkHeader,
 		200*time.Millisecond,
-		defaultInvalidStatusCodeValidator,
+		DefaultInvalidStatusCodeValidator,
 	)
 	if err != nil {
 		t.Fatalf("Expected non-nil error, got: %v", err)
@@ -259,7 +259,7 @@ func TestFetchingSlowServerWithHttpPostReturnsContextCanceledError(t *testing.T)
 				tc.input,
 				200*time.Millisecond,
 				Post,
-				defaultInvalidStatusCodeValidator,
+				DefaultInvalidStatusCodeValidator,
 			)
 			switch err {
 			case nil:
@@ -298,7 +298,7 @@ func TestFetchingWithGetMethodReturnsHelloWorld(t *testing.T) {
 				nil,
 				nil,
 				Duration,
-				defaultInvalidStatusCodeValidator,
+				DefaultInvalidStatusCodeValidator,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -337,7 +337,7 @@ func TestFetchingWithGetMethodWithInvalidMethodReturnsError(t *testing.T) {
 				nil,
 				nil,
 				Duration,
-				defaultInvalidStatusCodeValidator,
+				DefaultInvalidStatusCodeValidator,
 			)
 			if err == nil {
 				t.Fatal(err)
@@ -372,7 +372,7 @@ func TestFetchingWithHttpPostMethodReturnsCreateUserRes(t *testing.T) {
 				tc.input,
 				DeadLine,
 				Post,
-				defaultInvalidStatusCodeValidator,
+				DefaultInvalidStatusCodeValidator,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -427,7 +427,7 @@ func TestFetchingInParallelWithValidReqReturnsValidResponse(t *testing.T) {
 					DeadLine,
 					RetryInterval,
 					MaxRetries,
-					defaultInvalidStatusCodeValidator,
+					DefaultInvalidStatusCodeValidator,
 				),
 				FetchRx[createUserReq, createUserRes](
 					context.Background(),
@@ -439,7 +439,7 @@ func TestFetchingInParallelWithValidReqReturnsValidResponse(t *testing.T) {
 					DeadLine,
 					RetryInterval,
 					MaxRetries,
-					defaultInvalidStatusCodeValidator,
+					DefaultInvalidStatusCodeValidator,
 				),
 			)
 			switch err {
@@ -479,7 +479,7 @@ func TestFetchingWithHttpPostMethodAndBadReqReturnsBadRequest(t *testing.T) {
 				tc.input,
 				Duration,
 				Post,
-				defaultInvalidStatusCodeValidator,
+				DefaultInvalidStatusCodeValidator,
 			)
 			if err == tc.want {
 				t.Fatal(err)
@@ -506,7 +506,7 @@ func TestCastingWithValidValueReturnsValidValue(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := castRxGoItemTo[createUserRes](tc.input)
+			_, err := CastRxGoItemTo[createUserRes](tc.input)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -532,7 +532,7 @@ func TestCastingWithANonPointerValueReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := castRxGoItemTo[createUserRes](tc.input)
+			_, err := CastRxGoItemTo[createUserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -558,7 +558,7 @@ func TestCastingWithErrorValueReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := castRxGoItemTo[createUserRes](tc.input)
+			_, err := CastRxGoItemTo[createUserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -585,7 +585,7 @@ func TestCastingWithEmptyItemValueReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := castRxGoItemTo[createUserRes](tc.input)
+			_, err := CastRxGoItemTo[createUserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -611,7 +611,7 @@ func TestCastingWithNilValueAndNilErrorReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := castRxGoItemTo[createUserRes](tc.input)
+			_, err := CastRxGoItemTo[createUserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -638,7 +638,7 @@ func TestCastingWithNilValueAndErrorReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := castRxGoItemTo[createUserRes](tc.input)
+			_, err := CastRxGoItemTo[createUserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -664,7 +664,7 @@ func TestCastingWithUnknownTypeValueReturnsErrUnknownType(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := castRxGoItemTo[createUserReq](tc.input)
+			_, err := CastRxGoItemTo[createUserReq](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -695,7 +695,7 @@ func TestReadingBodyWithNonResponseReturnsData(t *testing.T) {
 				tc.input.URL,
 				nil,
 				Duration,
-				defaultInvalidStatusCodeValidator,
+				DefaultInvalidStatusCodeValidator,
 			)
 			if err != nil {
 				t.Fatal(err)

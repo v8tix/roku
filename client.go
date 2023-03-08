@@ -123,7 +123,7 @@ func FetchBiParallel[T, U Res](requests ...rxgo.Observable) (*T, *U, error) {
 		requests,
 	).Observe()
 
-	casted, err := castRxGoItemTo[BiRes[T, U]](<-ch)
+	casted, err := CastRxGoItemTo[BiRes[T, U]](<-ch)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -318,7 +318,7 @@ func do(
 	}
 }
 
-func defaultInvalidStatusCodeValidator(res *http.Response) bool {
+func DefaultInvalidStatusCodeValidator(res *http.Response) bool {
 	//validate all 4XX and 5XX error status codes
 	return (res.StatusCode/100)/4 == 1 || (res.StatusCode/100)/5 == 1
 }
@@ -379,7 +379,7 @@ func unmarshalReq[T Req](req *http.Request) (*T, error) {
 	return &genReq, nil
 }
 
-func castRxGoItemTo[T any](item rxgo.Item) (itemPointer *T, err error) {
+func CastRxGoItemTo[T any](item rxgo.Item) (itemPointer *T, err error) {
 	switch item.V.(type) {
 	case *T:
 		return item.V.(*T), nil
