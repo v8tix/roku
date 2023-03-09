@@ -304,8 +304,8 @@ func TestFetchingWithGetMethodReturnsHelloWorld(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if !(cmp.Equal(tc.want, *got)) {
-				t.Error(cmp.Diff(sm, got))
+			if !(cmp.Equal(tc.want, got.UnmarshalledBody)) {
+				t.Error(cmp.Diff(sm, got.UnmarshalledBody))
 			}
 		})
 	}
@@ -426,7 +426,7 @@ func TestFetchingInParallelWithValidReqReturnsValidResponse(t *testing.T) {
 					nil,
 					DeadLine,
 					RetryInterval,
-					MaxRetries,
+					2,
 					DefaultInvalidStatusCodeValidator,
 				),
 				FetchRx[createUserReq, createUserRes](
@@ -438,7 +438,7 @@ func TestFetchingInParallelWithValidReqReturnsValidResponse(t *testing.T) {
 					nil,
 					DeadLine,
 					RetryInterval,
-					MaxRetries,
+					2,
 					DefaultInvalidStatusCodeValidator,
 				),
 			)
@@ -622,9 +622,11 @@ func TestCastingWithNilValueAndNilErrorReturnsError(t *testing.T) {
 func TestCastingWithNilValueAndErrorReturnsError(t *testing.T) {
 	t.Parallel()
 
+	operationError := errors.New("operation error")
+
 	var item rxgo.Item
 	item.V = nil
-	item.E = errors.New("operation error")
+	item.E = operationError
 
 	cases := map[string]struct {
 		input rxgo.Item
@@ -632,7 +634,7 @@ func TestCastingWithNilValueAndErrorReturnsError(t *testing.T) {
 	}{
 		"with nil value and an error": {
 			input: item,
-			want:  ErrNilValue,
+			want:  operationError,
 		},
 	}
 
