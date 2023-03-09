@@ -45,6 +45,21 @@ type Res interface {
 	Res()
 }
 
+type Response[T Res] struct {
+	UnmarshalledBody T
+	*http.Response
+}
+
+func (r Response[T]) Res() {}
+
+func newResponse[T Res](pBody T, res *http.Response) *Response[T] {
+	r := Response[T]{
+		UnmarshalledBody: pBody,
+		Response:         res,
+	}
+	return &r
+}
+
 type ErrInvalidHttpStatus struct {
 	Res *http.Response
 }
@@ -113,9 +128,13 @@ func FetchRx[T Req, U Res](
 func FetchBiParallel[T, U Res](requests ...rxgo.Observable) (*T, *U, error) {
 	ch := rxgo.CombineLatest(
 		func(i ...interface{}) interface{} {
-			res, err := buildBiRes[T, U](i)
+			res, err := buildBiRes[Response[T], Response[U]](i)
 			if err != nil {
 				return err
+			}
+
+			if res.Res1 == nil || res.Res2 == nil {
+				return ErrNilValue
 			}
 
 			return res
@@ -175,9 +194,9 @@ func Fetch[T Req, U Res](
 	headers map[string]string,
 	deadline time.Duration,
 	statusCodeValidator func(res *http.Response) bool,
-) (*U, error) {
-	var response U
-	var res *http.Response
+) (*Response[U], error) {
+	var unmarshalledBody U
+	var httpResponse *http.Response
 	var timer *time.Timer
 	var reader *bytes.Reader
 	var data []byte
@@ -192,27 +211,27 @@ func Fetch[T Req, U Res](
 
 	switch method {
 	case Get:
-		res, timer, err = httpGet(ctx, httpClient, endpoint, headers, deadline, statusCodeValidator)
+		httpResponse, timer, err = httpGet(ctx, httpClient, endpoint, headers, deadline, statusCodeValidator)
 		if err != nil {
 			return nil, err
 		}
 	case Post:
-		res, timer, err = httpUpsert(ctx, httpClient, endpoint, headers, reader, deadline, Post, statusCodeValidator)
+		httpResponse, timer, err = httpUpsert(ctx, httpClient, endpoint, headers, reader, deadline, Post, statusCodeValidator)
 		if err != nil {
 			return nil, err
 		}
 	case Put:
-		res, timer, err = httpUpsert(ctx, httpClient, endpoint, headers, reader, deadline, Put, statusCodeValidator)
+		httpResponse, timer, err = httpUpsert(ctx, httpClient, endpoint, headers, reader, deadline, Put, statusCodeValidator)
 		if err != nil {
 			return nil, err
 		}
 	case Patch:
-		res, timer, err = httpUpsert(ctx, httpClient, endpoint, headers, reader, deadline, Patch, statusCodeValidator)
+		httpResponse, timer, err = httpUpsert(ctx, httpClient, endpoint, headers, reader, deadline, Patch, statusCodeValidator)
 		if err != nil {
 			return nil, err
 		}
 	case Delete:
-		res, timer, err = httpDelete(ctx, httpClient, endpoint, headers, deadline, statusCodeValidator)
+		httpResponse, timer, err = httpDelete(ctx, httpClient, endpoint, headers, deadline, statusCodeValidator)
 		if err != nil {
 			return nil, err
 		}
@@ -220,17 +239,17 @@ func Fetch[T Req, U Res](
 		return nil, ErrOperationNotAllowed
 	}
 
-	data, err = read(timer, res.Body)
+	data, err = read(timer, httpResponse.Body)
 	if err != nil {
 		return nil, err
 	}
 
-	err = json.Unmarshal(data, &response)
+	err = json.Unmarshal(data, &unmarshalledBody)
 	if err != nil {
 		return nil, err
 	}
 
-	return &response, nil
+	return newResponse[U](unmarshalledBody, httpResponse), nil
 }
 
 func httpGet(
@@ -385,7 +404,7 @@ func CastRxGoItemTo[T any](item rxgo.Item) (itemPointer *T, err error) {
 		return item.V.(*T), nil
 	case nil:
 		if item.E != nil {
-			return nil, fmt.Errorf("%q: %w", item.E.Error(), ErrNilValue)
+			return nil, item.E
 		} else {
 			return nil, ErrEmptyItem
 		}
