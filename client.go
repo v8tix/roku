@@ -14,15 +14,14 @@ import (
 )
 
 const (
-	Get           = HttpMethod("GET")
-	Post          = HttpMethod("POST")
-	Put           = HttpMethod("PUT")
-	Patch         = HttpMethod("PATCH")
-	Delete        = HttpMethod("DELETE")
-	Duration      = 15 * time.Second
-	ConnTimeOut   = 15 * time.Second
-	DeadLine      = 10 * time.Second
-	RetryInterval = 10 * time.Millisecond
+	Get         = HttpMethod("GET")
+	Post        = HttpMethod("POST")
+	Put         = HttpMethod("PUT")
+	Patch       = HttpMethod("PATCH")
+	Delete      = HttpMethod("DELETE")
+	Duration    = 15 * time.Second
+	ConnTimeOut = 15 * time.Second
+	DeadLine    = 10 * time.Second
 )
 
 var (
