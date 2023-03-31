@@ -22,14 +22,12 @@ const (
 	Duration      = 15 * time.Second
 	ConnTimeOut   = 15 * time.Second
 	DeadLine      = 10 * time.Second
-	MaxRetries    = 1
 	RetryInterval = 10 * time.Millisecond
 )
 
 var (
 	ErrTimeOut                  = errors.New("time out")
 	ErrMarshallValue            = errors.New("couldn't marshalling the value")
-	ErrCannotCast               = errors.New("couldn't cast nil interface")
 	ErrBadRequest               = errors.New("bad request")
 	ErrNonPointerOrWrongCasting = errors.New("RxGo item value is not a pointer or you are using the wrong casting type")
 	ErrEmptyItem                = errors.New("RxGo item has no value and no error")
@@ -37,23 +35,25 @@ var (
 	ErrOperationNotAllowed      = errors.New("operation not allowed")
 )
 
-type Req interface {
+type ReqI interface {
 	Req()
 }
 
-type Res interface {
+type ResI interface {
 	Res()
 }
 
-type Response[T Res] struct {
+type EmptyReq string
+
+func (er EmptyReq) Req() {}
+
+type HttpResponse[T ResI] struct {
 	UnmarshalledBody T
 	*http.Response
 }
 
-func (r Response[T]) Res() {}
-
-func newResponse[T Res](pBody T, res *http.Response) *Response[T] {
-	r := Response[T]{
+func newResponse[T ResI](pBody T, res *http.Response) *HttpResponse[T] {
+	r := HttpResponse[T]{
 		UnmarshalledBody: pBody,
 		Response:         res,
 	}
@@ -67,13 +67,6 @@ type ErrInvalidHttpStatus struct {
 func (e ErrInvalidHttpStatus) Error() string {
 	return fmt.Sprintf("response:{status_code: %d, status: %s}", e.Res.StatusCode, e.Res.Status)
 }
-
-type BiRes[T, R Res] struct {
-	Res1 *T
-	Res2 *R
-}
-
-func (pr BiRes[T, R]) Res() {}
 
 type HttpMethod string
 
@@ -90,7 +83,7 @@ func NewHTTPClient(
 	return &httpClient
 }
 
-func FetchRx[T Req, U Res](
+func FetchRx[T ReqI, U ResI](
 	ctx context.Context,
 	httpClient *http.Client,
 	method HttpMethod,
@@ -125,67 +118,7 @@ func FetchRx[T Req, U Res](
 	}).BackOffRetry(backoff.WithMaxRetries(backOffCfg, retries))
 }
 
-func FetchBiParallel[T, U Res](requests ...rxgo.Observable) (*T, *U, error) {
-	ch := rxgo.CombineLatest(
-		func(i ...interface{}) interface{} {
-			res, err := buildBiRes[Response[T], Response[U]](i)
-			if err != nil {
-				return err
-			}
-
-			if res.Res1 == nil || res.Res2 == nil {
-				return ErrNilValue
-			}
-
-			return res
-		},
-		requests,
-	).Observe()
-
-	casted, err := CastRxGoItemTo[BiRes[T, U]](<-ch)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	r1, r2, err := biCast[T, U](casted.Res1, casted.Res2)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return r1, r2, nil
-}
-
-func buildBiRes[T, R Res](items []interface{}) (*BiRes[T, R], error) {
-	var res1 *T
-	var res2 *R
-	var err error
-
-	for _, v := range items {
-		switch v.(type) {
-		case *T:
-			res1 = v.(*T)
-		case *R:
-			res2 = v.(*R)
-		case nil:
-			return nil, ErrNilValue
-		default:
-			err = v.(error)
-		}
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	pRes := BiRes[T, R]{
-		Res1: res1,
-		Res2: res2,
-	}
-
-	return &pRes, nil
-}
-
-func Fetch[T Req, U Res](
+func Fetch[T ReqI, U ResI](
 	ctx context.Context,
 	httpClient *http.Client,
 	method HttpMethod,
@@ -194,7 +127,7 @@ func Fetch[T Req, U Res](
 	headers map[string]string,
 	deadline time.Duration,
 	statusCodeValidator func(res *http.Response) bool,
-) (*Response[U], error) {
+) (*HttpResponse[U], error) {
 	var unmarshalledBody U
 	var httpResponse *http.Response
 	var timer *time.Timer
@@ -355,30 +288,7 @@ func toBytesReader[T any](value *T) (*bytes.Reader, error) {
 	}
 }
 
-func monoCast[T Res](p1 interface{}) (*T, error) {
-	switch p1.(type) {
-	case *T:
-		return p1.(*T), nil
-	default:
-		return nil, ErrCannotCast
-	}
-}
-
-func biCast[T, U Res](p1, p2 interface{}) (*T, *U, error) {
-	c1, err := monoCast[T](p1)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	c2, err := monoCast[U](p2)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return c1, c2, nil
-}
-
-func unmarshalReq[T Req](req *http.Request) (*T, error) {
+func unmarshalReq[T ReqI](req *http.Request) (*T, error) {
 	var genReq T
 
 	if req == nil {
