@@ -38,10 +38,6 @@ type createUserReq struct {
 
 func (createUserReq) Req() {}
 
-type emptyReq string
-
-func (emptyReq) Req() {}
-
 type simpleRes struct {
 	Msg string
 }
@@ -126,7 +122,7 @@ var (
 	getSvr = func() *httptest.Server {
 		return newTestServer(genericGetHandler[simpleRes](sm))
 	}
-	userSvr = func() *httptest.Server {
+	upsertSvr = func() *httptest.Server {
 		return newTestServer(
 			genericUpsertHandler[createUserReq, createUserRes](
 				cuReq,
@@ -290,7 +286,7 @@ func TestFetchingWithGetMethodReturnsHelloWorld(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			got, err := Fetch[emptyReq, simpleRes](
+			got, err := Fetch[EmptyReq, simpleRes](
 				context.Background(),
 				httpClient,
 				Get,
@@ -300,6 +296,46 @@ func TestFetchingWithGetMethodReturnsHelloWorld(t *testing.T) {
 				Duration,
 				DefaultInvalidStatusCodeValidator,
 			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !(cmp.Equal(tc.want, got.UnmarshalledBody)) {
+				t.Error(cmp.Diff(sm, got.UnmarshalledBody))
+			}
+		})
+	}
+}
+
+func TestFetchingWithRxGetMethodReturnsHelloWorld(t *testing.T) {
+	t.Parallel()
+	ts := getSvr()
+	defer ts.Close()
+
+	cases := map[string]struct {
+		want simpleRes
+	}{
+		"with get method": {
+			want: sm,
+		},
+	}
+
+	for input, tc := range cases {
+		t.Run(input, func(t *testing.T) {
+			ch := FetchRx[EmptyReq, simpleRes](
+				context.Background(),
+				httpClient,
+				Get,
+				ts.URL,
+				nil,
+				nil,
+				DeadLine,
+				Duration,
+				1,
+				DefaultInvalidStatusCodeValidator,
+			).Observe()
+
+			got, err := CastRxGoItemTo[HttpResponse[simpleRes]](<-ch)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -329,7 +365,7 @@ func TestFetchingWithGetMethodWithInvalidMethodReturnsError(t *testing.T) {
 
 	for input := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := Fetch[emptyReq, simpleRes](
+			_, err := Fetch[EmptyReq, simpleRes](
 				context.Background(),
 				httpClient,
 				Post,
@@ -349,7 +385,7 @@ func TestFetchingWithGetMethodWithInvalidMethodReturnsError(t *testing.T) {
 func TestFetchingWithHttpPostMethodReturnsCreateUserRes(t *testing.T) {
 	t.Parallel()
 	var got createUserRes
-	ts := userSvr()
+	ts := upsertSvr()
 	defer ts.Close()
 
 	cases := map[string]struct {
@@ -395,60 +431,48 @@ func TestFetchingWithHttpPostMethodReturnsCreateUserRes(t *testing.T) {
 	}
 }
 
-func TestFetchingInParallelWithValidReqReturnsValidResponse(t *testing.T) {
+func TestFetchingWithHttpGetMethodReturnsErrInvalidHttpStatus(t *testing.T) {
 	t.Parallel()
-	ts1 := userSvr()
-	ts2 := userSvr()
-	defer ts1.Close()
-	defer ts2.Close()
+	ts := upsertSvr()
+	defer ts.Close()
 
 	cases := map[string]struct {
-		input1 createUserReq
-		input2 createUserReq
-		want   error
+		input HttpMethod
+		want  int
 	}{
-		"with valid requests": {
-			input1: cuReq,
-			input2: cuReq,
-			want:   nil,
+		"with get method": {
+			input: Get,
+			want:  http.StatusMethodNotAllowed,
 		},
 	}
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, _, err := FetchBiParallel[createUserRes, createUserRes](
-				FetchRx[createUserReq, createUserRes](
-					context.Background(),
-					httpClient,
-					Post,
-					ts1.URL,
-					&tc.input1,
-					nil,
-					DeadLine,
-					RetryInterval,
-					2,
-					DefaultInvalidStatusCodeValidator,
-				),
-				FetchRx[createUserReq, createUserRes](
-					context.Background(),
-					httpClient,
-					Post,
-					ts1.URL,
-					&tc.input1,
-					nil,
-					DeadLine,
-					RetryInterval,
-					2,
-					DefaultInvalidStatusCodeValidator,
-				),
+			_, err := Fetch[EmptyReq, simpleRes](
+				context.Background(),
+				httpClient,
+				tc.input,
+				ts.URL,
+				nil,
+				nil,
+				Duration,
+				DefaultInvalidStatusCodeValidator,
 			)
 			switch err {
 			case nil:
-				return
+				t.Fatal(err)
 			default:
-				if !errors.Is(err, ErrNilValue) {
+				if !errors.As(err, &ErrInvalidHttpStatus{}) {
 					t.Fatal(err)
 				}
+
+				got := err.(ErrInvalidHttpStatus)
+
+				if got.Res.StatusCode != tc.want {
+					t.Fatal("invalid status code")
+				}
+
+				break
 			}
 		})
 	}
@@ -880,13 +904,13 @@ func genericGetHandler[T any](resp T) func(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func genericUpsertHandler[T Req, U Res](
+func genericUpsertHandler[T ReqI, U ResI](
 	req T,
 	res U,
 	f func(T, T) bool,
 ) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == string(Post) || r.Method == string(Put) {
+		if r.Method == string(Post) || r.Method == string(Put) || r.Method == string(Patch) {
 			reqT, err := unmarshalReq[T](r)
 			if err != nil {
 				switch {
