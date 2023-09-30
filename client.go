@@ -15,14 +15,14 @@ import (
 )
 
 const (
-	Get         = HttpMethod("GET")
-	Post        = HttpMethod("POST")
-	Put         = HttpMethod("PUT")
-	Patch       = HttpMethod("PATCH")
-	Delete      = HttpMethod("DELETE")
-	Duration    = 15 * time.Second
-	ConnTimeOut = 15 * time.Second
-	DeadLine    = 10 * time.Second
+	Get           = HttpMethod("GET")
+	Post          = HttpMethod("POST")
+	Put           = HttpMethod("PUT")
+	Patch         = HttpMethod("PATCH")
+	Delete        = HttpMethod("DELETE")
+	RetryInterval = 15 * time.Second
+	ConnTimeOut   = 15 * time.Second
+	DeadLine      = 10 * time.Second
 )
 
 var (
@@ -68,8 +68,55 @@ type ErrInvalidHttpStatus struct {
 	Res *http.Response
 }
 
+type ErrProps struct {
+	StatusCode int    `json:"status_code,omitempty"`
+	Status     string `json:"status,omitempty"`
+	ErrMessage string `json:"error_message,omitempty"`
+}
+
+func NewErrParams(statusCode int, status string, errMessage string) *ErrProps {
+	errParams := ErrProps{StatusCode: statusCode, Status: status, ErrMessage: errMessage}
+	return &errParams
+}
+
 func (e ErrInvalidHttpStatus) Error() string {
-	return fmt.Sprintf("response:{status_code: %d, status: %s}", e.Res.StatusCode, e.Res.Status)
+	msg, err := io.ReadAll(e.Res.Body)
+	if err != nil {
+		return ""
+	}
+	errParams := NewErrParams(e.Res.StatusCode, e.Res.Status, string(msg))
+	errParamsMarshalled, err := json.Marshal(errParams)
+	if err != nil {
+		return ""
+	}
+	return string(errParamsMarshalled)
+}
+
+func (e ErrInvalidHttpStatus) UnmarshalError() (ErrProps, error) {
+	var errProps ErrProps
+
+	reader := bytes.NewReader([]byte(e.Error()))
+	err := readJSON(reader, &errProps)
+	if err != nil {
+		return ErrProps{}, err
+	}
+
+	return errProps, nil
+}
+
+func GetErrorProperties(err error) ErrProps {
+	if !errors.As(err, &ErrInvalidHttpStatus{}) {
+		return ErrProps{}
+	}
+
+	var errInv ErrInvalidHttpStatus
+	errors.As(err, &errInv)
+	errorProps, err := errInv.UnmarshalError()
+	if err != nil {
+		return ErrProps{}
+	}
+
+	return errorProps
 }
 
 type HttpMethod string
