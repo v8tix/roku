@@ -88,14 +88,14 @@ var (
 	}()
 	httpClient = func() *http.Client {
 		return NewHTTPClient(
-			Duration,
+			RetryInterval,
 			policy.OneRedirect,
 			transport.IdleConnectionTimeout(ConnTimeOut),
 		)
 	}()
 	customHeadersHttpClient = func(headers middleware.CustomHeaders) *http.Client {
 		return NewHTTPClient(
-			Duration,
+			RetryInterval,
 			policy.OneRedirect,
 			headers,
 		)
@@ -293,7 +293,7 @@ func TestFetchingWithGetMethodReturnsHelloWorld(t *testing.T) {
 				ts.URL,
 				nil,
 				nil,
-				Duration,
+				RetryInterval,
 				DefaultInvalidStatusCodeValidator,
 			)
 			if err != nil {
@@ -329,7 +329,7 @@ func TestFetchingWithDeleteMethodReturnsEmptyResponse(t *testing.T) {
 				ts.URL,
 				nil,
 				nil,
-				Duration,
+				RetryInterval,
 				DefaultInvalidStatusCodeValidator,
 			)
 			if err != nil {
@@ -366,7 +366,7 @@ func TestFetchingWithRxGetMethodReturnsHelloWorld(t *testing.T) {
 				nil,
 				nil,
 				DeadLine,
-				Duration,
+				RetryInterval,
 				1,
 				DefaultInvalidStatusCodeValidator,
 			).Observe()
@@ -408,7 +408,7 @@ func TestFetchingWithGetMethodWithInvalidMethodReturnsError(t *testing.T) {
 				url,
 				nil,
 				nil,
-				Duration,
+				RetryInterval,
 				DefaultInvalidStatusCodeValidator,
 			)
 			if err == nil {
@@ -491,20 +491,21 @@ func TestFetchingWithHttpGetMethodReturnsErrInvalidHttpStatus(t *testing.T) {
 				ts.URL,
 				nil,
 				nil,
-				Duration,
+				RetryInterval,
 				DefaultInvalidStatusCodeValidator,
 			)
 			switch err {
 			case nil:
 				t.Fatal(err)
 			default:
+
 				if !errors.As(err, &ErrInvalidHttpStatus{}) {
 					t.Fatal(err)
 				}
 
-				got := err.(ErrInvalidHttpStatus)
+				errorProperties := GetErrorProperties(err)
 
-				if got.Res.StatusCode != tc.want {
+				if errorProperties.StatusCode != tc.want {
 					t.Fatal("invalid status code")
 				}
 
@@ -537,7 +538,7 @@ func TestFetchingWithHttpPostMethodAndBadReqReturnsBadRequest(t *testing.T) {
 				ts.URL,
 				nil,
 				tc.input,
-				Duration,
+				RetryInterval,
 				Post,
 				DefaultInvalidStatusCodeValidator,
 			)
@@ -756,7 +757,7 @@ func TestReadingBodyWithNonResponseReturnsData(t *testing.T) {
 				httpClient,
 				tc.input.URL,
 				nil,
-				Duration,
+				RetryInterval,
 				DefaultInvalidStatusCodeValidator,
 			)
 			if err != nil {
