@@ -13,10 +13,8 @@ import (
 	"github.com/v8tix/roku/policy"
 	"github.com/v8tix/roku/transport"
 	"io"
-	"log"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 )
@@ -68,16 +66,12 @@ func newTestServer(handler func(http.ResponseWriter, *http.Request)) *httptest.S
 
 var (
 	ErrInternalServer = errors.New("internal server error")
-	readerCloser      = func() io.ReadCloser {
-		data, err := json.Marshal(cuReq)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		return io.NopCloser(strings.NewReader(string(data)))
-	}
-	nonSerde = func() nonSerdeType {
+	nonSerde          = func() nonSerdeType {
 		return ""
+	}()
+	badlyFormed = func() io.Reader {
+		data := []byte("{ \"name\" : \"Marco\"")
+		return bytes.NewReader(data)
 	}()
 	linkHeader = func() map[string]string {
 		return map[string]string{
@@ -109,6 +103,9 @@ var (
 	sm = func() simpleRes {
 		return simpleRes{Msg: "Hello World !"}
 	}()
+	emptyRes = func() *EmptyRes {
+		return nil
+	}()
 	cuReq = func() createUserReq {
 		return newCreateUserReq("Adam Smith", "adam.smith@hotmail.com")
 	}()
@@ -120,7 +117,10 @@ var (
 		return newCreateUserRes("c9f9b69d-4321-40bb-bac9-3cb832648232")
 	}()
 	getSvr = func() *httptest.Server {
-		return newTestServer(genericGetHandler[simpleRes](sm))
+		return newTestServer(genericGetHandler[simpleRes](&sm))
+	}
+	deleteNoContentSvr = func() *httptest.Server {
+		return newTestServer(genericDeleteHandler[simpleRes](&sm))
 	}
 	upsertSvr = func() *httptest.Server {
 		return newTestServer(
@@ -277,10 +277,10 @@ func TestFetchingWithGetMethodReturnsHelloWorld(t *testing.T) {
 	defer ts.Close()
 
 	cases := map[string]struct {
-		want simpleRes
+		want *simpleRes
 	}{
 		"with get method": {
-			want: sm,
+			want: &sm,
 		},
 	}
 
@@ -307,16 +307,52 @@ func TestFetchingWithGetMethodReturnsHelloWorld(t *testing.T) {
 	}
 }
 
+func TestFetchingWithDeleteMethodReturnsEmptyResponse(t *testing.T) {
+	t.Parallel()
+	ts := deleteNoContentSvr()
+	defer ts.Close()
+
+	cases := map[string]struct {
+		want *EmptyRes
+	}{
+		"with delete method": {
+			want: emptyRes,
+		},
+	}
+
+	for input, tc := range cases {
+		t.Run(input, func(t *testing.T) {
+			got, err := Fetch[EmptyReq, EmptyRes](
+				context.Background(),
+				httpClient,
+				Delete,
+				ts.URL,
+				nil,
+				nil,
+				Duration,
+				DefaultInvalidStatusCodeValidator,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !(cmp.Equal(tc.want, got.UnmarshalledBody)) {
+				t.Error(cmp.Diff(sm, got.UnmarshalledBody))
+			}
+		})
+	}
+}
+
 func TestFetchingWithRxGetMethodReturnsHelloWorld(t *testing.T) {
 	t.Parallel()
 	ts := getSvr()
 	defer ts.Close()
 
 	cases := map[string]struct {
-		want simpleRes
+		want *simpleRes
 	}{
 		"with get method": {
-			want: sm,
+			want: &sm,
 		},
 	}
 
@@ -414,7 +450,7 @@ func TestFetchingWithHttpPostMethodReturnsCreateUserRes(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			data, err := read(timer, resp.Body)
+			data, err := readBody(timer, resp.Body)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -727,7 +763,7 @@ func TestReadingBodyWithNonResponseReturnsData(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			_, err = read(timer, got.Body)
+			_, err = readBody(timer, got.Body)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -831,33 +867,24 @@ func TestUnmarshallingRequestWithNilRequestReturnsError(t *testing.T) {
 	}
 }
 
-func TestReadingReadCloserWithStringAndNoTimerReturnsData(t *testing.T) {
+func TestReadJsonWithBadJsonReturnsError(t *testing.T) {
 	t.Parallel()
-	var err error
 
-	rc := readerCloser()
-	defer func(rc io.ReadCloser) {
-		err = rc.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-	}(rc)
+	var req createUserReq
 
 	cases := map[string]struct {
-		input io.ReadCloser
-		want  error
+		input io.Reader
 	}{
-		"with valid data and no timer": {
-			input: rc,
-			want:  nil,
+		"with bad json": {
+			input: badlyFormed,
 		},
 	}
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			data, err := read(nil, tc.input)
-			if data == nil {
-				t.Fatal(err)
+			err := readJSON(tc.input, &req)
+			if err == nil {
+				t.Errorf("error: %v", err)
 			}
 		})
 	}
@@ -882,16 +909,26 @@ func slowReqValidator[T any]() func(req1 T, req2 T) bool {
 	}
 }
 
-func genericGetHandler[T any](resp T) func(w http.ResponseWriter, r *http.Request) {
+func genericGetHandler[T any](resp *T) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == string(Get) {
-			data, err := json.Marshal(resp)
+			err := writeJSON[T](w, http.StatusOK, resp, nil)
 			if err != nil {
-				http.Error(w, "marshalling error", http.StatusInternalServerError)
+				http.Error(w, "error writing data", http.StatusInternalServerError)
 				return
 			}
-			w.Header().Set("Content-Type", "application/json")
-			_, err = w.Write(data)
+			return
+		} else {
+			http.Error(w, "invalid HTTP method specified", http.StatusMethodNotAllowed)
+			return
+		}
+	}
+}
+
+func genericDeleteHandler[T any](resp *T) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == string(Delete) {
+			err := writeJSON[T](w, http.StatusNoContent, resp, nil)
 			if err != nil {
 				http.Error(w, "error writing data", http.StatusInternalServerError)
 				return
@@ -931,13 +968,7 @@ func genericUpsertHandler[T ReqI, U ResI](
 				return
 			}
 
-			data, err := json.Marshal(&res)
-			if err != nil {
-				http.Error(w, "cannot marshal res", http.StatusBadRequest)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_, err = w.Write(data)
+			err = writeJSON[U](w, http.StatusOK, &res, nil)
 			if err != nil {
 				http.Error(w, "error writing data", http.StatusInternalServerError)
 				return
@@ -948,4 +979,38 @@ func genericUpsertHandler[T ReqI, U ResI](
 		http.Error(w, "Invalid HTTP method specified", http.StatusMethodNotAllowed)
 		return
 	}
+}
+
+func writeJSON[U any](w http.ResponseWriter, status int, data *U, headers http.Header) error {
+	js, err := json.MarshalIndent(data, "", "\t")
+	if err != nil {
+		return err
+	}
+
+	js = append(js, '\n')
+
+	for key, value := range headers {
+		w.Header()[key] = value
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	w.Write(js)
+
+	return nil
+}
+
+func unmarshalReq[T ReqI](req *http.Request) (*T, error) {
+	var genReq T
+
+	if req == nil {
+		return nil, ErrNilValue
+	}
+
+	err := readJSON(req.Body, &genReq)
+	if err != nil {
+		return nil, fmt.Errorf("%q: %w", err.Error(), ErrBadRequest)
+	}
+
+	return &genReq, nil
 }
