@@ -10,6 +10,7 @@ import (
 	"github.com/reactivex/rxgo/v2"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -44,14 +45,18 @@ type ResI interface {
 
 type EmptyReq string
 
-func (er EmptyReq) Req() {}
+func (erq EmptyReq) Req() {}
+
+type EmptyRes struct{}
+
+func (erp EmptyRes) Res() {}
 
 type HttpResponse[T ResI] struct {
-	UnmarshalledBody T
+	UnmarshalledBody *T
 	*http.Response
 }
 
-func newResponse[T ResI](pBody T, res *http.Response) *HttpResponse[T] {
+func newResponse[T ResI](pBody *T, res *http.Response) *HttpResponse[T] {
 	r := HttpResponse[T]{
 		UnmarshalledBody: pBody,
 		Response:         res,
@@ -171,17 +176,21 @@ func Fetch[T ReqI, U ResI](
 		return nil, ErrOperationNotAllowed
 	}
 
-	data, err = read(timer, httpResponse.Body)
-	if err != nil {
-		return nil, err
+	if httpResponse.StatusCode != http.StatusNoContent {
+		data, err = readBody(timer, httpResponse.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		err = readJSON(bytes.NewReader(data), &unmarshalledBody)
+		if err != nil {
+			return nil, err
+		}
+
+		return newResponse[U](&unmarshalledBody, httpResponse), nil
 	}
 
-	err = json.Unmarshal(data, &unmarshalledBody)
-	if err != nil {
-		return nil, err
-	}
-
-	return newResponse[U](unmarshalledBody, httpResponse), nil
+	return newResponse[U](nil, httpResponse), nil
 }
 
 func httpGet(
@@ -287,26 +296,6 @@ func toBytesReader[T any](value *T) (*bytes.Reader, error) {
 	}
 }
 
-func unmarshalReq[T ReqI](req *http.Request) (*T, error) {
-	var genReq T
-
-	if req == nil {
-		return nil, ErrNilValue
-	}
-
-	data, err := read(nil, req.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	err = json.Unmarshal(data, &genReq)
-	if err != nil {
-		return nil, fmt.Errorf("%q: %w", err.Error(), ErrBadRequest)
-	}
-
-	return &genReq, nil
-}
-
 func CastRxGoItemTo[T any](item rxgo.Item) (itemPointer *T, err error) {
 	switch item.V.(type) {
 	case *T:
@@ -324,27 +313,77 @@ func CastRxGoItemTo[T any](item rxgo.Item) (itemPointer *T, err error) {
 	}
 }
 
-func read(timer *time.Timer, rc io.ReadCloser) (data []byte, err error) {
+func readBody(timer *time.Timer, rc io.ReadCloser) (data []byte, err error) {
 	defer func(rc io.ReadCloser) {
 		err = rc.Close()
 	}(rc)
 
-	if timer != nil {
-		buf := new(bytes.Buffer)
-
-		for {
-			timer.Reset(10 * time.Millisecond)
-			_, err = io.CopyN(buf, rc, 256)
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					break
-				}
-				return nil, err
-			}
-		}
-
-		return buf.Bytes(), nil
+	if timer == nil {
+		return nil, errors.New("timer must be set")
 	}
 
-	return io.ReadAll(rc)
+	buf := new(bytes.Buffer)
+
+	for {
+		timer.Reset(10 * time.Millisecond)
+		_, err = io.CopyN(buf, rc, 256)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, err
+		}
+	}
+
+	return buf.Bytes(), nil
+}
+
+func readJSON(body io.Reader, dst any) error {
+	dec := json.NewDecoder(body)
+	dec.DisallowUnknownFields()
+
+	err := dec.Decode(dst)
+	if err != nil {
+		var syntaxError *json.SyntaxError
+		var unmarshalTypeError *json.UnmarshalTypeError
+		var invalidUnmarshalError *json.InvalidUnmarshalError
+		var maxBytesError *http.MaxBytesError
+
+		switch {
+		case errors.As(err, &syntaxError):
+			return fmt.Errorf("body contains badly-formed JSON (at character %d)", syntaxError.Offset)
+
+		case errors.Is(err, io.ErrUnexpectedEOF):
+			return errors.New("body contains badly-formed JSON")
+
+		case errors.As(err, &unmarshalTypeError):
+			if unmarshalTypeError.Field != "" {
+				return fmt.Errorf("body contains incorrect JSON type for field %q", unmarshalTypeError.Field)
+			}
+			return fmt.Errorf("body contains incorrect JSON type (at character %d)", unmarshalTypeError.Offset)
+
+		case errors.Is(err, io.EOF):
+			return errors.New("body must not be empty")
+
+		case strings.HasPrefix(err.Error(), "json: unknown field "):
+			fieldName := strings.TrimPrefix(err.Error(), "json: unknown field ")
+			return fmt.Errorf("body contains unknown key %s", fieldName)
+
+		case errors.As(err, &maxBytesError):
+			return fmt.Errorf("body must not be larger than %d bytes", maxBytesError.Limit)
+
+		case errors.As(err, &invalidUnmarshalError):
+			panic(err)
+
+		default:
+			return err
+		}
+	}
+
+	err = dec.Decode(&struct{}{})
+	if !errors.Is(err, io.EOF) {
+		return errors.New("body must only contain a single JSON value")
+	}
+
+	return nil
 }
