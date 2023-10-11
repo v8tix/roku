@@ -43,23 +43,23 @@ type ResI interface {
 	Res()
 }
 
-type EmptyReq string
+type NoReq string
 
-func (erq EmptyReq) Req() {}
+func (nrq NoReq) Req() {}
 
-type EmptyRes struct{}
+type NoRes struct{}
 
-func (erp EmptyRes) Res() {}
+func (nrp NoRes) Res() {}
 
-type HttpResponse[T ResI] struct {
-	UnmarshalledBody *T
+type Envelope[T ResI] struct {
+	Body *T
 	*http.Response
 }
 
-func newResponse[T ResI](pBody *T, res *http.Response) *HttpResponse[T] {
-	r := HttpResponse[T]{
-		UnmarshalledBody: pBody,
-		Response:         res,
+func newResponse[T ResI](pBody *T, res *http.Response) *Envelope[T] {
+	r := Envelope[T]{
+		Body:     pBody,
+		Response: res,
 	}
 	return &r
 }
@@ -178,7 +178,7 @@ func Fetch[T ReqI, U ResI](
 	headers map[string]string,
 	deadline time.Duration,
 	statusCodeValidator func(res *http.Response) bool,
-) (*HttpResponse[U], error) {
+) (*Envelope[U], error) {
 	var unmarshalledBody U
 	var httpResponse *http.Response
 	var timer *time.Timer

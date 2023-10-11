@@ -103,7 +103,7 @@ var (
 	sm = func() simpleRes {
 		return simpleRes{Msg: "Hello World !"}
 	}()
-	emptyRes = func() *EmptyRes {
+	emptyRes = func() *NoRes {
 		return nil
 	}()
 	cuReq = func() createUserReq {
@@ -286,7 +286,7 @@ func TestFetchingWithGetMethodReturnsHelloWorld(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			got, err := Fetch[EmptyReq, simpleRes](
+			got, err := Fetch[NoReq, simpleRes](
 				context.Background(),
 				httpClient,
 				Get,
@@ -300,8 +300,8 @@ func TestFetchingWithGetMethodReturnsHelloWorld(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if !(cmp.Equal(tc.want, got.UnmarshalledBody)) {
-				t.Error(cmp.Diff(sm, got.UnmarshalledBody))
+			if !(cmp.Equal(tc.want, got.Body)) {
+				t.Error(cmp.Diff(sm, got.Body))
 			}
 		})
 	}
@@ -313,7 +313,7 @@ func TestFetchingWithDeleteMethodReturnsEmptyResponse(t *testing.T) {
 	defer ts.Close()
 
 	cases := map[string]struct {
-		want *EmptyRes
+		want *NoRes
 	}{
 		"with delete method": {
 			want: emptyRes,
@@ -322,7 +322,7 @@ func TestFetchingWithDeleteMethodReturnsEmptyResponse(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			got, err := Fetch[EmptyReq, EmptyRes](
+			got, err := Fetch[NoReq, NoRes](
 				context.Background(),
 				httpClient,
 				Delete,
@@ -336,8 +336,8 @@ func TestFetchingWithDeleteMethodReturnsEmptyResponse(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if !(cmp.Equal(tc.want, got.UnmarshalledBody)) {
-				t.Error(cmp.Diff(sm, got.UnmarshalledBody))
+			if !(cmp.Equal(tc.want, got.Body)) {
+				t.Error(cmp.Diff(sm, got.Body))
 			}
 		})
 	}
@@ -358,7 +358,7 @@ func TestFetchingWithRxGetMethodReturnsHelloWorld(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			ch := FetchRx[EmptyReq, simpleRes](
+			ch := FetchRx[NoReq, simpleRes](
 				context.Background(),
 				httpClient,
 				Get,
@@ -371,13 +371,13 @@ func TestFetchingWithRxGetMethodReturnsHelloWorld(t *testing.T) {
 				DefaultInvalidStatusCodeValidator,
 			).Observe()
 
-			got, err := To[HttpResponse[simpleRes]](<-ch)
+			got, err := To[Envelope[simpleRes]](<-ch)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if !(cmp.Equal(tc.want, got.UnmarshalledBody)) {
-				t.Error(cmp.Diff(sm, got.UnmarshalledBody))
+			if !(cmp.Equal(tc.want, got.Body)) {
+				t.Error(cmp.Diff(sm, got.Body))
 			}
 		})
 	}
@@ -401,7 +401,7 @@ func TestFetchingWithGetMethodWithInvalidMethodReturnsError(t *testing.T) {
 
 	for input := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := Fetch[EmptyReq, simpleRes](
+			_, err := Fetch[NoReq, simpleRes](
 				context.Background(),
 				httpClient,
 				Post,
@@ -484,7 +484,7 @@ func TestFetchingWithHttpGetMethodReturnsErrInvalidHttpStatus(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := Fetch[EmptyReq, simpleRes](
+			_, err := Fetch[NoReq, simpleRes](
 				context.Background(),
 				httpClient,
 				tc.input,
