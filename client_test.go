@@ -371,7 +371,7 @@ func TestFetchingWithRxGetMethodReturnsHelloWorld(t *testing.T) {
 				DefaultInvalidStatusCodeValidator,
 			).Observe()
 
-			got, err := CastRxGoItemTo[HttpResponse[simpleRes]](<-ch)
+			got, err := To[HttpResponse[simpleRes]](<-ch)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -567,7 +567,7 @@ func TestCastingWithValidValueReturnsValidValue(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := CastRxGoItemTo[createUserRes](tc.input)
+			_, err := To[createUserRes](tc.input)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -593,7 +593,7 @@ func TestCastingWithANonPointerValueReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := CastRxGoItemTo[createUserRes](tc.input)
+			_, err := To[createUserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -619,7 +619,7 @@ func TestCastingWithErrorValueReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := CastRxGoItemTo[createUserRes](tc.input)
+			_, err := To[createUserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -646,7 +646,7 @@ func TestCastingWithEmptyItemValueReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := CastRxGoItemTo[createUserRes](tc.input)
+			_, err := To[createUserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -672,7 +672,7 @@ func TestCastingWithNilValueAndNilErrorReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := CastRxGoItemTo[createUserRes](tc.input)
+			_, err := To[createUserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -701,7 +701,7 @@ func TestCastingWithNilValueAndErrorReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := CastRxGoItemTo[createUserRes](tc.input)
+			_, err := To[createUserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -727,7 +727,7 @@ func TestCastingWithUnknownTypeValueReturnsErrUnknownType(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := CastRxGoItemTo[createUserReq](tc.input)
+			_, err := To[createUserReq](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -883,7 +883,7 @@ func TestReadJsonWithBadJsonReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			err := readJSON(tc.input, &req)
+			err := ReadJSON(tc.input, &req)
 			if err == nil {
 				t.Errorf("error: %v", err)
 			}
@@ -1008,7 +1008,7 @@ func unmarshalReq[T ReqI](req *http.Request) (*T, error) {
 		return nil, ErrNilValue
 	}
 
-	err := readJSON(req.Body, &genReq)
+	err := ReadJSON(req.Body, &genReq)
 	if err != nil {
 		return nil, fmt.Errorf("%q: %w", err.Error(), ErrBadRequest)
 	}
