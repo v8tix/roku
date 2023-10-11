@@ -96,7 +96,7 @@ func (e ErrInvalidHttpStatus) UnmarshalError() (ErrProps, error) {
 	var errProps ErrProps
 
 	reader := bytes.NewReader([]byte(e.Error()))
-	err := readJSON(reader, &errProps)
+	err := ReadJSON(reader, &errProps)
 	if err != nil {
 		return ErrProps{}, err
 	}
@@ -229,7 +229,7 @@ func Fetch[T ReqI, U ResI](
 			return nil, err
 		}
 
-		err = readJSON(bytes.NewReader(data), &unmarshalledBody)
+		err = ReadJSON(bytes.NewReader(data), &unmarshalledBody)
 		if err != nil {
 			return nil, err
 		}
@@ -343,7 +343,7 @@ func toBytesReader[T any](value *T) (*bytes.Reader, error) {
 	}
 }
 
-func CastRxGoItemTo[T any](item rxgo.Item) (itemPointer *T, err error) {
+func To[T any](item rxgo.Item) (itemPointer *T, err error) {
 	switch item.V.(type) {
 	case *T:
 		return item.V.(*T), nil
@@ -385,7 +385,7 @@ func readBody(timer *time.Timer, rc io.ReadCloser) (data []byte, err error) {
 	return buf.Bytes(), nil
 }
 
-func readJSON(body io.Reader, dst any) error {
+func ReadJSON(body io.Reader, dst any) error {
 	dec := json.NewDecoder(body)
 	dec.DisallowUnknownFields()
 
