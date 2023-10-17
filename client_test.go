@@ -21,6 +21,8 @@ import (
 
 type nonSerdeType string
 
+type envelope map[string]any
+
 func (n *nonSerdeType) UnmarshalJSON(_ []byte) error {
 	return errors.New("non-serde struct")
 }
@@ -29,34 +31,45 @@ func (n nonSerdeType) MarshalJSON() ([]byte, error) {
 	return nil, errors.New("non-serde struct")
 }
 
-type createUserReq struct {
+type CreateUserV1Req struct {
 	Name  string `json:"name,omitempty"`
 	Email string `json:"email,omitempty"`
 }
 
-func (createUserReq) Req() {}
-
-type simpleRes struct {
-	Msg string
+func newCreateUserV1Req(name string, email string) CreateUserV1Req {
+	return CreateUserV1Req{Name: name, Email: email}
 }
 
-func (simpleRes) Res() {}
+func (CreateUserV1Req) Req() {}
 
-type createUserRes struct {
+type UserRes struct {
 	ID string `json:"id,omitempty"`
 }
 
-func (createUserRes) Res() {}
+func (UserRes) Res() {}
 
-func newCreateUserReq(name, email string) createUserReq {
-	return createUserReq{
-		Name:  name,
-		Email: email,
-	}
+type GetUserV1Res struct {
+	Name      string `json:"name,omitempty"`
+	SmsNumber string `json:"sms_number,omitempty"`
+	Enabled   bool   `json:"enabled,omitempty"`
 }
 
-func newCreateUserRes(id string) createUserRes {
-	return createUserRes{ID: id}
+func newGetUserV1Res(name string, smsNumber string, enabled bool) GetUserV1Res {
+	return GetUserV1Res{Name: name, SmsNumber: smsNumber, Enabled: enabled}
+}
+
+type GetUserEnvV1Res struct {
+	User GetUserV1Res `json:"user,omitempty"`
+}
+
+func newGetUserEnvV1Res(user GetUserV1Res) *GetUserEnvV1Res {
+	return &GetUserEnvV1Res{User: user}
+}
+
+func (g GetUserEnvV1Res) Res() {}
+
+func newCreateUserRes(id string) UserRes {
+	return UserRes{ID: id}
 }
 
 func newTestServer(handler func(http.ResponseWriter, *http.Request)) *httptest.Server {
@@ -65,8 +78,7 @@ func newTestServer(handler func(http.ResponseWriter, *http.Request)) *httptest.S
 }
 
 var (
-	ErrInternalServer = errors.New("internal server error")
-	nonSerde          = func() nonSerdeType {
+	nonSerde = func() nonSerdeType {
 		return ""
 	}()
 	badlyFormed = func() io.Reader {
@@ -88,115 +100,104 @@ var (
 	}()
 	httpClient = func() *http.Client {
 		return NewHTTPClient(
-			RetryInterval,
+			5*time.Second,
 			policy.OneRedirect,
 			transport.IdleConnectionTimeout(ConnTimeOut),
 		)
 	}()
 	customHeadersHttpClient = func(headers middleware.CustomHeaders) *http.Client {
 		return NewHTTPClient(
-			RetryInterval,
+			5*time.Second,
 			policy.OneRedirect,
 			headers,
 		)
 	}
-	sm = func() simpleRes {
-		return simpleRes{Msg: "Hello World !"}
+	userRes = func() GetUserV1Res {
+		return newGetUserV1Res("Marco", "1800-some-number", false)
 	}()
-	emptyRes = func() *NoRes {
-		return nil
+	userEnvRes = func() *GetUserEnvV1Res {
+		return newGetUserEnvV1Res(userRes)
 	}()
-	cuReq = func() createUserReq {
-		return newCreateUserReq("Adam Smith", "adam.smith@hotmail.com")
+	cuReq = func() CreateUserV1Req {
+		return newCreateUserV1Req("Adam Smith", "adam.smith@hotmail.com")
 	}()
 	cuReqReader = func() *bytes.Reader {
 		b, _ := json.Marshal(cuReq)
 		return bytes.NewReader(b)
 	}
-	cuRes = func() createUserRes {
+	cuRes = func() UserRes {
 		return newCreateUserRes("c9f9b69d-4321-40bb-bac9-3cb832648232")
 	}()
-	getSvr = func() *httptest.Server {
-		return newTestServer(genericGetHandler[simpleRes](&sm))
+	upsertUserSvr = func() *httptest.Server {
+		return newTestServer(upsertUserHandler)
 	}
-	deleteNoContentSvr = func() *httptest.Server {
-		return newTestServer(genericDeleteHandler[simpleRes](&sm))
+	slowUserSvr = func() *httptest.Server {
+		return newTestServer(slowUpsertUserHandler)
 	}
-	upsertSvr = func() *httptest.Server {
-		return newTestServer(
-			genericUpsertHandler[createUserReq, createUserRes](
-				cuReq,
-				cuRes,
-				fixedReqValidator[createUserReq](),
-			),
-		)
-	}
-	userEmptyReqSvr = func() *httptest.Server {
-		var er createUserReq
-		return newTestServer(
-			genericUpsertHandler[createUserReq, createUserRes](
-				er,
-				cuRes,
-				reqValidator[createUserReq](),
-			),
-		)
-	}
-	slowSvr = func() *httptest.Server {
-		return newTestServer(
-			genericUpsertHandler[createUserReq, createUserRes](
-				cuReq,
-				cuRes,
-				slowReqValidator[createUserReq](),
-			),
-		)
-	}
-	//Header Middleware
 	headerEchoSvr = func() *httptest.Server {
-		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			for k, v := range r.Header {
-				w.Header().Set(k, v[0])
-			}
-			_, err := fmt.Fprint(w, sm.Msg)
-			if err != nil {
-				return
-			}
-		}))
+		return newTestServer(headerEchoHandler)
+	}
+	getUserSvr = func() *httptest.Server {
+		return newTestServer(getUserHandler)
+	}
+	notFoundResSvr = func() *httptest.Server {
+		return newTestServer(notFoundHandler)
 	}
 )
 
-func TestAddHeaderMiddleware(t *testing.T) {
+func TestFetchingWithClientHeadersReturnsClientHeaders(t *testing.T) {
 	t.Parallel()
 
-	customClient := customHeadersHttpClient(middleware.NewCustomHeaders(linkHeader))
+	customClient := customHeadersHttpClient(middleware.NewCustomHeaders(headers))
 	ts := headerEchoSvr()
 	defer ts.Close()
 
 	cases := map[string]struct {
-		input map[string]string
-		want  simpleRes
+		client              *http.Client
+		httpMethod          HttpMethod
+		url                 string
+		request             io.Reader
+		headers             map[string]string
+		deadline            time.Duration
+		retryInterval       time.Duration
+		retries             uint64
+		statusCodeValidator func(res *http.Response) bool
+		cxt                 context.Context
+		want                map[string]string
 	}{
-		"with custom headers round tripper": {
-			input: authorizationHeader,
-			want:  sm,
+		"with custom headers": {
+			cxt:                 context.Background(),
+			client:              customClient,
+			url:                 ts.URL,
+			request:             nil,
+			headers:             nil,
+			httpMethod:          Get,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                headers,
 		},
 	}
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			resp, _, err := httpGet(
+			resp, _, err := httpCall(
 				context.Background(),
-				customClient,
-				ts.URL,
-				tc.input,
-				200*time.Millisecond,
+				tc.client,
+				tc.url,
+				tc.headers,
+				tc.request,
+				tc.deadline,
+				Get,
 				DefaultInvalidStatusCodeValidator,
 			)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			for k, v := range headers {
-				if resp.Header.Get(k) != headers[k] {
+			for k, v := range tc.want {
+				if resp.Header.Get(k) != tc.want[k] {
 					t.Fatalf("Expected header: %s:%s, Got: %s:%s", k, v, k, resp.Header.Get(k))
 				}
 			}
@@ -204,346 +205,119 @@ func TestAddHeaderMiddleware(t *testing.T) {
 	}
 }
 
-// Header Context
-func TestAddHeaderContext(t *testing.T) {
+func TestFetchingWithContextHeadersReturnsContextHeaders(t *testing.T) {
 	t.Parallel()
 
 	ts := headerEchoSvr()
 	defer ts.Close()
 
-	resp, _, err := httpGet(
-		context.Background(),
-		httpClient,
-		ts.URL,
-		linkHeader,
-		200*time.Millisecond,
-		DefaultInvalidStatusCodeValidator,
-	)
-	if err != nil {
-		t.Fatalf("Expected non-nil error, got: %v", err)
-	}
-
-	for k, v := range linkHeader {
-		if resp.Header.Get(k) != linkHeader[k] {
-			t.Fatalf("Expected header: %s:%s, Got: %s:%s", k, v, k, linkHeader[k])
-		}
-	}
-}
-
-func TestFetchingSlowServerWithHttpPostReturnsContextCanceledError(t *testing.T) {
-	t.Parallel()
-	ts := slowSvr()
-	defer ts.Close()
-
 	cases := map[string]struct {
-		input *bytes.Reader
-		want  error
+		client              *http.Client
+		httpMethod          HttpMethod
+		url                 string
+		request             io.Reader
+		headers             map[string]string
+		deadline            time.Duration
+		retryInterval       time.Duration
+		retries             uint64
+		statusCodeValidator func(res *http.Response) bool
+		cxt                 context.Context
+		want                map[string]string
 	}{
-		"with valid request": {
-			input: cuReqReader(),
-			want:  nil,
+		"with headers on context": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             nil,
+			headers:             headers,
+			httpMethod:          Get,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                headers,
 		},
 	}
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, _, err := httpUpsert(
+			resp, _, err := httpCall(
 				context.Background(),
-				httpClient,
-				ts.URL,
-				nil,
-				tc.input,
-				200*time.Millisecond,
-				Post,
+				tc.client,
+				tc.url,
+				tc.headers,
+				tc.request,
+				tc.deadline,
+				Get,
+				DefaultInvalidStatusCodeValidator,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for k, v := range tc.want {
+				if resp.Header.Get(k) != tc.want[k] {
+					t.Fatalf("Expected header: %s:%s, Got: %s:%s", k, v, k, resp.Header.Get(k))
+				}
+			}
+		})
+	}
+}
+
+func TestFetchingSlowServerReturnsContextCanceledError(t *testing.T) {
+	t.Parallel()
+	ts := slowUserSvr()
+	defer ts.Close()
+
+	cases := map[string]struct {
+		client              *http.Client
+		httpMethod          HttpMethod
+		url                 string
+		request             io.Reader
+		headers             map[string]string
+		deadline            time.Duration
+		retryInterval       time.Duration
+		retries             uint64
+		statusCodeValidator func(res *http.Response) bool
+		cxt                 context.Context
+		want                error
+	}{
+		"with valid request": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             cuReqReader(),
+			headers:             nil,
+			httpMethod:          Post,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                ErrTimeOut,
+		},
+	}
+
+	for input, tc := range cases {
+		t.Run(input, func(t *testing.T) {
+			_, _, err := httpCall(
+				context.Background(),
+				tc.client,
+				tc.url,
+				tc.headers,
+				tc.request,
+				tc.deadline,
+				tc.httpMethod,
 				DefaultInvalidStatusCodeValidator,
 			)
 			switch err {
 			case nil:
 				t.Fatal("request didn't time out")
 			default:
-				if errors.Is(err, ErrTimeOut) {
+				if errors.Is(err, tc.want) {
 					t.Log(err.Error())
 				} else {
 					t.Fatal(err)
 				}
-			}
-		})
-	}
-}
-
-func TestFetchingWithGetMethodReturnsHelloWorld(t *testing.T) {
-	t.Parallel()
-	ts := getSvr()
-	defer ts.Close()
-
-	cases := map[string]struct {
-		want *simpleRes
-	}{
-		"with get method": {
-			want: &sm,
-		},
-	}
-
-	for input, tc := range cases {
-		t.Run(input, func(t *testing.T) {
-			got, err := Fetch[NoReq, simpleRes](
-				context.Background(),
-				httpClient,
-				Get,
-				ts.URL,
-				nil,
-				nil,
-				RetryInterval,
-				DefaultInvalidStatusCodeValidator,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if !(cmp.Equal(tc.want, got.Body)) {
-				t.Error(cmp.Diff(sm, got.Body))
-			}
-		})
-	}
-}
-
-func TestFetchingWithDeleteMethodReturnsEmptyResponse(t *testing.T) {
-	t.Parallel()
-	ts := deleteNoContentSvr()
-	defer ts.Close()
-
-	cases := map[string]struct {
-		want *NoRes
-	}{
-		"with delete method": {
-			want: emptyRes,
-		},
-	}
-
-	for input, tc := range cases {
-		t.Run(input, func(t *testing.T) {
-			got, err := Fetch[NoReq, NoRes](
-				context.Background(),
-				httpClient,
-				Delete,
-				ts.URL,
-				nil,
-				nil,
-				RetryInterval,
-				DefaultInvalidStatusCodeValidator,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if !(cmp.Equal(tc.want, got.Body)) {
-				t.Error(cmp.Diff(sm, got.Body))
-			}
-		})
-	}
-}
-
-func TestFetchingWithRxGetMethodReturnsHelloWorld(t *testing.T) {
-	t.Parallel()
-	ts := getSvr()
-	defer ts.Close()
-
-	cases := map[string]struct {
-		want *simpleRes
-	}{
-		"with get method": {
-			want: &sm,
-		},
-	}
-
-	for input, tc := range cases {
-		t.Run(input, func(t *testing.T) {
-			ch := FetchRx[NoReq, simpleRes](
-				context.Background(),
-				httpClient,
-				Get,
-				ts.URL,
-				nil,
-				nil,
-				DeadLine,
-				RetryInterval,
-				1,
-				DefaultInvalidStatusCodeValidator,
-			).Observe()
-
-			got, err := To[Envelope[simpleRes]](<-ch)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if !(cmp.Equal(tc.want, got.Body)) {
-				t.Error(cmp.Diff(sm, got.Body))
-			}
-		})
-	}
-}
-
-func TestFetchingWithGetMethodWithInvalidMethodReturnsError(t *testing.T) {
-	t.Parallel()
-	ts := getSvr()
-	url := ts.URL
-	defer ts.Close()
-
-	cases := map[string]struct {
-		input *bytes.Reader
-		want  error
-	}{
-		"with invalid method": {
-			input: cuReqReader(),
-			want:  nil,
-		},
-	}
-
-	for input := range cases {
-		t.Run(input, func(t *testing.T) {
-			_, err := Fetch[NoReq, simpleRes](
-				context.Background(),
-				httpClient,
-				Post,
-				url,
-				nil,
-				nil,
-				RetryInterval,
-				DefaultInvalidStatusCodeValidator,
-			)
-			if err == nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
-
-func TestFetchingWithHttpPostMethodReturnsCreateUserRes(t *testing.T) {
-	t.Parallel()
-	var got createUserRes
-	ts := upsertSvr()
-	defer ts.Close()
-
-	cases := map[string]struct {
-		input *bytes.Reader
-		want  error
-	}{
-		"with valid request": {
-			input: cuReqReader(),
-			want:  nil,
-		},
-	}
-
-	for input, tc := range cases {
-		t.Run(input, func(t *testing.T) {
-			resp, timer, err := httpUpsert(
-				context.Background(),
-				httpClient,
-				ts.URL,
-				nil,
-				tc.input,
-				DeadLine,
-				Post,
-				DefaultInvalidStatusCodeValidator,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			data, err := readBody(timer, resp.Body)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			err = json.Unmarshal(data, &got)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if !cmp.Equal(got, cuRes) {
-				t.Error(cmp.Diff(got, cuRes))
-			}
-		})
-	}
-}
-
-func TestFetchingWithHttpGetMethodReturnsErrInvalidHttpStatus(t *testing.T) {
-	t.Parallel()
-	ts := upsertSvr()
-	defer ts.Close()
-
-	cases := map[string]struct {
-		input HttpMethod
-		want  int
-	}{
-		"with get method": {
-			input: Get,
-			want:  http.StatusMethodNotAllowed,
-		},
-	}
-
-	for input, tc := range cases {
-		t.Run(input, func(t *testing.T) {
-			_, err := Fetch[NoReq, simpleRes](
-				context.Background(),
-				httpClient,
-				tc.input,
-				ts.URL,
-				nil,
-				nil,
-				RetryInterval,
-				DefaultInvalidStatusCodeValidator,
-			)
-			switch err {
-			case nil:
-				t.Fatal(err)
-			default:
-
-				if !errors.As(err, &ErrInvalidHttpStatus{}) {
-					t.Fatal(err)
-				}
-
-				errorProperties := GetErrorProperties(err)
-
-				if errorProperties.StatusCode != tc.want {
-					t.Fatal("invalid status code")
-				}
-
-				break
-			}
-		})
-	}
-}
-
-func TestFetchingWithHttpPostMethodAndBadReqReturnsBadRequest(t *testing.T) {
-	t.Parallel()
-	ts := userEmptyReqSvr()
-	defer ts.Close()
-
-	cases := map[string]struct {
-		input *bytes.Reader
-		want  error
-	}{
-		"with bad request": {
-			input: cuReqReader(),
-			want:  nil,
-		},
-	}
-
-	for input, tc := range cases {
-		t.Run(input, func(t *testing.T) {
-			_, _, err := httpUpsert(
-				context.Background(),
-				httpClient,
-				ts.URL,
-				nil,
-				tc.input,
-				RetryInterval,
-				Post,
-				DefaultInvalidStatusCodeValidator,
-			)
-			if err == tc.want {
-				t.Fatal(err)
 			}
 		})
 	}
@@ -557,7 +331,7 @@ func TestCastingWithValidValueReturnsValidValue(t *testing.T) {
 
 	cases := map[string]struct {
 		input rxgo.Item
-		want  *createUserRes
+		want  *UserRes
 	}{
 		"with valid value": {
 			input: item,
@@ -567,7 +341,7 @@ func TestCastingWithValidValueReturnsValidValue(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := To[createUserRes](tc.input)
+			_, err := To[UserRes](tc.input)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -593,7 +367,7 @@ func TestCastingWithANonPointerValueReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := To[createUserRes](tc.input)
+			_, err := To[UserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -619,7 +393,7 @@ func TestCastingWithErrorValueReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := To[createUserRes](tc.input)
+			_, err := To[UserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -646,7 +420,7 @@ func TestCastingWithEmptyItemValueReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := To[createUserRes](tc.input)
+			_, err := To[UserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -672,7 +446,7 @@ func TestCastingWithNilValueAndNilErrorReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := To[createUserRes](tc.input)
+			_, err := To[UserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -701,7 +475,7 @@ func TestCastingWithNilValueAndErrorReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := To[createUserRes](tc.input)
+			_, err := To[UserRes](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -727,46 +501,9 @@ func TestCastingWithUnknownTypeValueReturnsErrUnknownType(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := To[createUserReq](tc.input)
+			_, err := To[CreateUserV1Req](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
-			}
-		})
-	}
-}
-
-func TestReadingBodyWithNonResponseReturnsData(t *testing.T) {
-	t.Parallel()
-	ts := getSvr()
-	defer ts.Close()
-
-	cases := map[string]struct {
-		input *httptest.Server
-		want  simpleRes
-	}{
-		"with get method": {
-			input: ts,
-			want:  sm,
-		},
-	}
-
-	for input, tc := range cases {
-		t.Run(input, func(t *testing.T) {
-			got, timer, err := httpGet(
-				context.Background(),
-				httpClient,
-				tc.input.URL,
-				nil,
-				RetryInterval,
-				DefaultInvalidStatusCodeValidator,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			_, err = readBody(timer, got.Body)
-			if err != nil {
-				t.Fatal(err)
 			}
 		})
 	}
@@ -775,10 +512,10 @@ func TestReadingBodyWithNonResponseReturnsData(t *testing.T) {
 func TestConvertingRequestToBytesReaderWithNilRequestReturnsError(t *testing.T) {
 	t.Parallel()
 
-	var req *createUserReq
+	var req *CreateUserV1Req
 
 	cases := map[string]struct {
-		input *createUserReq
+		input *CreateUserV1Req
 		want  error
 	}{
 		"with nil request": {
@@ -789,7 +526,7 @@ func TestConvertingRequestToBytesReaderWithNilRequestReturnsError(t *testing.T) 
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := toBytesReader[createUserReq](tc.input)
+			_, err := toBytesReader[CreateUserV1Req](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -801,7 +538,7 @@ func TestConvertingRequestToBytesReaderWithNonNilRequestReturnsReader(t *testing
 	t.Parallel()
 
 	cases := map[string]struct {
-		input *createUserReq
+		input *CreateUserV1Req
 		want  error
 	}{
 		"with valid request": {
@@ -812,8 +549,8 @@ func TestConvertingRequestToBytesReaderWithNonNilRequestReturnsReader(t *testing
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := toBytesReader[createUserReq](tc.input)
-			if err != tc.want {
+			_, err := toBytesReader[CreateUserV1Req](tc.input)
+			if !errors.Is(err, tc.want) {
 				t.Fatal(err)
 			}
 		})
@@ -860,7 +597,7 @@ func TestUnmarshallingRequestWithNilRequestReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := unmarshalReq[createUserReq](tc.input)
+			_, err := unmarshalReq[CreateUserV1Req](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -871,7 +608,7 @@ func TestUnmarshallingRequestWithNilRequestReturnsError(t *testing.T) {
 func TestReadJsonWithBadJsonReturnsError(t *testing.T) {
 	t.Parallel()
 
-	var req createUserReq
+	var req CreateUserV1Req
 
 	cases := map[string]struct {
 		input io.Reader
@@ -891,98 +628,533 @@ func TestReadJsonWithBadJsonReturnsError(t *testing.T) {
 	}
 }
 
-func reqValidator[T any]() func(req1 T, req2 T) bool {
-	return func(req1 T, req2 T) bool {
-		return cmp.Equal(req1, req2)
-	}
-}
+func TestFetchingWithNilBodyReturnsNonEmptyRes(t *testing.T) {
+	t.Parallel()
+	ts := getUserSvr()
+	defer ts.Close()
 
-func fixedReqValidator[T any]() func(req1 T, req2 T) bool {
-	return func(req1 T, req2 T) bool {
-		return true
+	cases := map[string]struct {
+		client              *http.Client
+		httpMethod          HttpMethod
+		url                 string
+		request             *NoReq
+		headers             map[string]string
+		deadline            time.Duration
+		retryInterval       time.Duration
+		retries             uint64
+		statusCodeValidator func(res *http.Response) bool
+		cxt                 context.Context
+		want                *GetUserEnvV1Res
+	}{
+		"with get method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             nil,
+			headers:             nil,
+			httpMethod:          Get,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                userEnvRes,
+		},
+		"with delete method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             nil,
+			headers:             nil,
+			httpMethod:          Delete,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                userEnvRes,
+		},
+		"with post method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             nil,
+			headers:             nil,
+			httpMethod:          Post,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                userEnvRes,
+		},
+		"with put method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             nil,
+			headers:             nil,
+			httpMethod:          Put,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                userEnvRes,
+		},
+		"with patch method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             nil,
+			headers:             nil,
+			httpMethod:          Patch,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                userEnvRes,
+		},
 	}
-}
 
-func slowReqValidator[T any]() func(req1 T, req2 T) bool {
-	return func(req1 T, req2 T) bool {
-		time.Sleep(500 * time.Millisecond)
-		return true
-	}
-}
+	for input, tc := range cases {
+		t.Run(input, func(t *testing.T) {
+			ch := FetchRx[NoReq, GetUserEnvV1Res](
+				tc.cxt,
+				tc.client,
+				tc.httpMethod,
+				ts.URL,
+				tc.request,
+				tc.headers,
+				tc.deadline,
+				tc.retryInterval,
+				tc.retries,
+				tc.statusCodeValidator,
+			).Observe()
 
-func genericGetHandler[T any](resp *T) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == string(Get) {
-			err := writeJSON[T](w, http.StatusOK, resp, nil)
+			got, err := To[Envelope[GetUserEnvV1Res]](<-ch)
 			if err != nil {
-				http.Error(w, "error writing data", http.StatusInternalServerError)
-				return
+				t.Fatal(err)
 			}
-			return
-		} else {
-			http.Error(w, "invalid HTTP method specified", http.StatusMethodNotAllowed)
-			return
-		}
-	}
-}
 
-func genericDeleteHandler[T any](resp *T) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == string(Delete) {
-			err := writeJSON[T](w, http.StatusNoContent, resp, nil)
-			if err != nil {
-				http.Error(w, "error writing data", http.StatusInternalServerError)
-				return
+			if !(cmp.Equal(tc.want, got.Body)) {
+				t.Error(cmp.Diff(tc.want, got.Body))
 			}
-			return
-		} else {
-			http.Error(w, "invalid HTTP method specified", http.StatusMethodNotAllowed)
-			return
-		}
+		})
 	}
 }
 
-func genericUpsertHandler[T ReqI, U ResI](
-	req T,
-	res U,
-	f func(T, T) bool,
-) func(w http.ResponseWriter, r *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == string(Post) || r.Method == string(Put) || r.Method == string(Patch) {
-			reqT, err := unmarshalReq[T](r)
+func TestFetchingWithNonNilBodyReturnsNonEmptyRes(t *testing.T) {
+	t.Parallel()
+	ts := upsertUserSvr()
+	defer ts.Close()
+
+	cases := map[string]struct {
+		client              *http.Client
+		httpMethod          HttpMethod
+		url                 string
+		request             CreateUserV1Req
+		headers             map[string]string
+		deadline            time.Duration
+		retryInterval       time.Duration
+		retries             uint64
+		statusCodeValidator func(res *http.Response) bool
+		cxt                 context.Context
+		want                *GetUserEnvV1Res
+	}{
+		"with post method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             cuReq,
+			headers:             nil,
+			httpMethod:          Post,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                userEnvRes,
+		},
+		"with put method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             cuReq,
+			headers:             nil,
+			httpMethod:          Put,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                userEnvRes,
+		},
+		"with patch method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             cuReq,
+			headers:             nil,
+			httpMethod:          Patch,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                userEnvRes,
+		},
+	}
+
+	for input, tc := range cases {
+		t.Run(input, func(t *testing.T) {
+			ch := FetchRx[CreateUserV1Req, GetUserEnvV1Res](
+				tc.cxt,
+				tc.client,
+				tc.httpMethod,
+				ts.URL,
+				&tc.request,
+				tc.headers,
+				tc.deadline,
+				tc.retryInterval,
+				tc.retries,
+				tc.statusCodeValidator,
+			).Observe()
+
+			got, err := To[Envelope[GetUserEnvV1Res]](<-ch)
 			if err != nil {
-				switch {
-				case errors.Is(err, ErrInternalServer):
-					http.Error(w, "UnmarshalReq", http.StatusInternalServerError)
-					return
-				case errors.Is(err, ErrBadRequest):
-					http.Error(w, "UnmarshalReq", http.StatusBadRequest)
-					return
-				default:
-					http.Error(w, "UnmarshalReq", http.StatusInternalServerError)
-					return
+				t.Fatal(err)
+			}
+
+			if !(cmp.Equal(tc.want, got.Body)) {
+				t.Error(cmp.Diff(tc.want, got.Body))
+			}
+		})
+	}
+}
+
+func TestFetchingWithNilBodyReturnsNotFoundErr(t *testing.T) {
+	t.Parallel()
+	ts := notFoundResSvr()
+	defer ts.Close()
+
+	cases := map[string]struct {
+		client              *http.Client
+		httpMethod          HttpMethod
+		url                 string
+		request             *NoReq
+		headers             map[string]string
+		deadline            time.Duration
+		retryInterval       time.Duration
+		retries             uint64
+		statusCodeValidator func(res *http.Response) bool
+		cxt                 context.Context
+		want                *NoRes
+	}{
+		"with get method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             nil,
+			headers:             nil,
+			httpMethod:          Get,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                nil,
+		},
+		"with delete method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             nil,
+			headers:             nil,
+			httpMethod:          Delete,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                nil,
+		},
+		"with post method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             nil,
+			headers:             nil,
+			httpMethod:          Post,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                nil,
+		},
+		"with put method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             nil,
+			headers:             nil,
+			httpMethod:          Put,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                nil,
+		},
+		"with patch method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             nil,
+			headers:             nil,
+			httpMethod:          Patch,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                nil,
+		},
+	}
+
+	for input, tc := range cases {
+		t.Run(input, func(t *testing.T) {
+			ch := FetchRx[NoReq, GetUserEnvV1Res](
+				tc.cxt,
+				tc.client,
+				tc.httpMethod,
+				ts.URL,
+				tc.request,
+				tc.headers,
+				tc.deadline,
+				tc.retryInterval,
+				tc.retries,
+				tc.statusCodeValidator,
+			).Observe()
+
+			got, err := To[Envelope[GetUserEnvV1Res]](<-ch)
+			switch err {
+			case nil:
+				t.Fatal(err)
+			default:
+				if got != nil {
+					t.Fatal(errors.New("envelop is not nil"))
+				}
+
+				if errors.As(err, &ErrInvalidHttpStatus{}) {
+					errProps := GetErrorProperties(err)
+					if errProps.StatusCode != http.StatusNotFound {
+						t.Fatal(err)
+					}
 				}
 			}
-
-			if !f(*reqT, req) {
-				http.Error(w, "requests are not equal", http.StatusBadRequest)
-				return
-			}
-
-			err = writeJSON[U](w, http.StatusOK, &res, nil)
-			if err != nil {
-				http.Error(w, "error writing data", http.StatusInternalServerError)
-				return
-			}
-			return
-		}
-
-		http.Error(w, "Invalid HTTP method specified", http.StatusMethodNotAllowed)
-		return
+		})
 	}
 }
 
-func writeJSON[U any](w http.ResponseWriter, status int, data *U, headers http.Header) error {
+func TestFetchingWithNonNilBodyReturnsNotFoundErr(t *testing.T) {
+	t.Parallel()
+	ts := notFoundResSvr()
+	defer ts.Close()
+
+	cases := map[string]struct {
+		client              *http.Client
+		httpMethod          HttpMethod
+		url                 string
+		request             *CreateUserV1Req
+		headers             map[string]string
+		deadline            time.Duration
+		retryInterval       time.Duration
+		retries             uint64
+		statusCodeValidator func(res *http.Response) bool
+		cxt                 context.Context
+		want                *NoRes
+	}{
+		"with get method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             &cuReq,
+			headers:             nil,
+			httpMethod:          Get,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                nil,
+		},
+		"with delete method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             &cuReq,
+			headers:             nil,
+			httpMethod:          Delete,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                nil,
+		},
+		"with post method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             &cuReq,
+			headers:             nil,
+			httpMethod:          Post,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                nil,
+		},
+		"with put method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             &cuReq,
+			headers:             nil,
+			httpMethod:          Put,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                nil,
+		},
+		"with patch method": {
+			cxt:                 context.Background(),
+			client:              httpClient,
+			url:                 ts.URL,
+			request:             &cuReq,
+			headers:             nil,
+			httpMethod:          Patch,
+			deadline:            10 * time.Millisecond,
+			retryInterval:       15 * time.Millisecond,
+			retries:             1,
+			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			want:                nil,
+		},
+	}
+
+	for input, tc := range cases {
+		t.Run(input, func(t *testing.T) {
+			ch := FetchRx[CreateUserV1Req, GetUserEnvV1Res](
+				tc.cxt,
+				tc.client,
+				tc.httpMethod,
+				ts.URL,
+				tc.request,
+				tc.headers,
+				tc.deadline,
+				tc.retryInterval,
+				tc.retries,
+				tc.statusCodeValidator,
+			).Observe()
+
+			got, err := To[Envelope[GetUserEnvV1Res]](<-ch)
+			switch err {
+			case nil:
+				t.Fatal(err)
+			default:
+				if got != nil {
+					t.Fatal(errors.New("envelop is not nil"))
+				}
+
+				if errors.As(err, &ErrInvalidHttpStatus{}) {
+					errProps := GetErrorProperties(err)
+					if errProps.StatusCode != http.StatusNotFound {
+						t.Fatal(err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func getUserHandler(w http.ResponseWriter, r *http.Request) {
+	env := envelope{
+		"user": userRes,
+	}
+
+	err := write(w, http.StatusOK, env, nil)
+	if err != nil {
+		serverErrorResponse(w, r, err)
+	}
+
+	return
+}
+
+func headerEchoHandler(w http.ResponseWriter, r *http.Request) {
+	for k, v := range r.Header {
+		w.Header().Set(k, v[0])
+	}
+
+	env := envelope{
+		"user": userRes,
+	}
+
+	err := write(w, http.StatusOK, env, nil)
+	if err != nil {
+		serverErrorResponse(w, r, err)
+	}
+
+	return
+}
+
+func slowUpsertUserHandler(w http.ResponseWriter, r *http.Request) {
+	time.Sleep(500 * time.Millisecond)
+	upsertUserHandler(w, r)
+}
+
+func upsertUserHandler(w http.ResponseWriter, r *http.Request) {
+	maxBytes := 1_048_576
+	r.Body = http.MaxBytesReader(w, r.Body, int64(maxBytes))
+
+	var req CreateUserV1Req
+
+	err := ReadJSON(r.Body, &req)
+	if err != nil {
+		errorResponse(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	env := envelope{
+		"user": userRes,
+	}
+
+	err = write(w, http.StatusOK, env, nil)
+	if err != nil {
+		serverErrorResponse(w, r, err)
+	}
+
+	return
+}
+
+func notFoundHandler(w http.ResponseWriter, r *http.Request) {
+	errorResponse(w, r, http.StatusNotFound, errors.New("user not found"))
+	return
+}
+
+func unmarshalReq[T ReqI](req *http.Request) (*T, error) {
+	var genReq T
+
+	if req == nil {
+		return nil, ErrNilValue
+	}
+
+	err := ReadJSON(req.Body, &genReq)
+	if err != nil {
+		return nil, fmt.Errorf("%q: %w", err.Error(), ErrBadRequest)
+	}
+
+	return &genReq, nil
+}
+
+func errorResponse(w http.ResponseWriter, r *http.Request, status int, message any) {
+	env := envelope{"error": message}
+
+	err := write(w, status, env, nil)
+	if err != nil {
+		w.WriteHeader(500)
+	}
+}
+
+func write(w http.ResponseWriter, status int, data envelope, headers http.Header) error {
 	js, err := json.MarshalIndent(data, "", "\t")
 	if err != nil {
 		return err
@@ -1001,17 +1173,7 @@ func writeJSON[U any](w http.ResponseWriter, status int, data *U, headers http.H
 	return nil
 }
 
-func unmarshalReq[T ReqI](req *http.Request) (*T, error) {
-	var genReq T
-
-	if req == nil {
-		return nil, ErrNilValue
-	}
-
-	err := ReadJSON(req.Body, &genReq)
-	if err != nil {
-		return nil, fmt.Errorf("%q: %w", err.Error(), ErrBadRequest)
-	}
-
-	return &genReq, nil
+func serverErrorResponse(w http.ResponseWriter, r *http.Request, err error) {
+	message := "the server encountered a problem and could not process your request"
+	errorResponse(w, r, http.StatusInternalServerError, message)
 }

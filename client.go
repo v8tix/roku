@@ -32,7 +32,7 @@ var (
 	ErrNonPointerOrWrongCasting = errors.New("RxGo item value is not a pointer or you are using the wrong casting type")
 	ErrEmptyItem                = errors.New("RxGo item has no value and no error")
 	ErrNilValue                 = errors.New("nil value provided")
-	ErrOperationNotAllowed      = errors.New("operation not allowed")
+	ErrTimerNotSet              = errors.New("timer must be set")
 )
 
 type ReqI interface {
@@ -179,48 +179,33 @@ func Fetch[T ReqI, U ResI](
 	deadline time.Duration,
 	statusCodeValidator func(res *http.Response) bool,
 ) (*Envelope[U], error) {
-	var unmarshalledBody U
+	var body U
 	var httpResponse *http.Response
 	var timer *time.Timer
-	var reader *bytes.Reader
 	var data []byte
 	var err error
 
-	if method == Post || method == Put || method == Patch {
-		reader, err = toBytesReader[T](req)
-		if err != nil {
+	reader, err := toBytesReader[T](req)
+	switch err {
+	case nil:
+		break
+	default:
+		if !errors.Is(err, ErrNilValue) {
 			return nil, err
 		}
 	}
 
-	switch method {
-	case Get:
-		httpResponse, timer, err = httpGet(ctx, httpClient, endpoint, headers, deadline, statusCodeValidator)
-		if err != nil {
-			return nil, err
-		}
-	case Post:
-		httpResponse, timer, err = httpUpsert(ctx, httpClient, endpoint, headers, reader, deadline, Post, statusCodeValidator)
-		if err != nil {
-			return nil, err
-		}
-	case Put:
-		httpResponse, timer, err = httpUpsert(ctx, httpClient, endpoint, headers, reader, deadline, Put, statusCodeValidator)
-		if err != nil {
-			return nil, err
-		}
-	case Patch:
-		httpResponse, timer, err = httpUpsert(ctx, httpClient, endpoint, headers, reader, deadline, Patch, statusCodeValidator)
-		if err != nil {
-			return nil, err
-		}
-	case Delete:
-		httpResponse, timer, err = httpDelete(ctx, httpClient, endpoint, headers, deadline, statusCodeValidator)
+	switch reader {
+	case nil:
+		httpResponse, timer, err = httpCall(ctx, httpClient, endpoint, headers, nil, deadline, method, statusCodeValidator)
 		if err != nil {
 			return nil, err
 		}
 	default:
-		return nil, ErrOperationNotAllowed
+		httpResponse, timer, err = httpCall(ctx, httpClient, endpoint, headers, reader, deadline, method, statusCodeValidator)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if httpResponse.StatusCode != http.StatusNoContent {
@@ -229,40 +214,18 @@ func Fetch[T ReqI, U ResI](
 			return nil, err
 		}
 
-		err = ReadJSON(bytes.NewReader(data), &unmarshalledBody)
+		err = ReadJSON(bytes.NewReader(data), &body)
 		if err != nil {
 			return nil, err
 		}
 
-		return newResponse[U](&unmarshalledBody, httpResponse), nil
+		return newResponse[U](&body, httpResponse), nil
 	}
 
 	return newResponse[U](nil, httpResponse), nil
 }
 
-func httpGet(
-	ctx context.Context,
-	client *http.Client,
-	url string,
-	headers map[string]string,
-	deadline time.Duration,
-	statusCodeValidator func(res *http.Response) bool,
-) (*http.Response, *time.Timer, error) {
-	return do(ctx, client, url, Get, headers, nil, deadline, statusCodeValidator)
-}
-
-func httpDelete(
-	ctx context.Context,
-	client *http.Client,
-	url string,
-	headers map[string]string,
-	deadline time.Duration,
-	statusCodeValidator func(res *http.Response) bool,
-) (*http.Response, *time.Timer, error) {
-	return do(ctx, client, url, Delete, headers, nil, deadline, statusCodeValidator)
-}
-
-func httpUpsert(
+func httpCall(
 	ctx context.Context,
 	client *http.Client,
 	url string,
@@ -272,10 +235,7 @@ func httpUpsert(
 	method HttpMethod,
 	statusCodeValidator func(res *http.Response) bool,
 ) (*http.Response, *time.Timer, error) {
-	if method == Post || method == Put || method == Patch {
-		return do(ctx, client, url, method, headers, body, deadline, statusCodeValidator)
-	}
-	return nil, nil, ErrOperationNotAllowed
+	return do(ctx, client, url, method, headers, body, deadline, statusCodeValidator)
 }
 
 func do(
@@ -366,7 +326,7 @@ func readBody(timer *time.Timer, rc io.ReadCloser) (data []byte, err error) {
 	}(rc)
 
 	if timer == nil {
-		return nil, errors.New("timer must be set")
+		return nil, ErrTimerNotSet
 	}
 
 	buf := new(bytes.Buffer)
