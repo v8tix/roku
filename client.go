@@ -15,14 +15,12 @@ import (
 )
 
 const (
-	Get           = HttpMethod("GET")
-	Post          = HttpMethod("POST")
-	Put           = HttpMethod("PUT")
-	Patch         = HttpMethod("PATCH")
-	Delete        = HttpMethod("DELETE")
-	RetryInterval = 15 * time.Second
-	ConnTimeOut   = 15 * time.Second
-	DeadLine      = 10 * time.Second
+	Get         = HTTPMethod("GET")
+	Post        = HTTPMethod("POST")
+	Put         = HTTPMethod("PUT")
+	Patch       = HTTPMethod("PATCH")
+	Delete      = HTTPMethod("DELETE")
+	ConnTimeOut = 15 * time.Second
 )
 
 var (
@@ -33,102 +31,112 @@ var (
 	ErrEmptyItem                = errors.New("RxGo item has no value and no error")
 	ErrNilValue                 = errors.New("nil value provided")
 	ErrTimerNotSet              = errors.New("timer must be set")
+	ErrBadlyJSON                = errors.New("body contains badly-formed JSON")
+	ErrBadJSONType              = errors.New("body contains incorrect JSON type")
+	ErrEmptyBody                = errors.New("body must not be empty")
+	ErrBodyUnknownKey           = errors.New("body contains unknown key")
+	ErrBodySizeLimit            = errors.New("body size limit exceeded")
+	ErrBodyValue                = errors.New("body must only contain a single JSON value")
 )
 
-type ReqI interface {
-	Req()
-}
+type (
+	ReqI interface {
+		Req()
+	}
 
-type ResI interface {
-	Res()
-}
+	ResI interface {
+		Res()
+	}
 
-type NoReq string
+	NoReq string
+
+	NoRes string
+
+	HTTPMethod string
+
+	Envelope[T ResI] struct {
+		Body *T
+		*http.Response
+	}
+
+	ErrInvalidHTTPStatus struct {
+		Res *http.Response
+	}
+
+	ErrDesc struct {
+		StatusCode int    `json:"status_code,omitempty"`
+		Status     string `json:"status,omitempty"`
+		ErrMessage string `json:"error_message,omitempty"`
+	}
+)
 
 func (nrq NoReq) Req() {}
 
-type NoRes struct{}
-
 func (nrp NoRes) Res() {}
 
-type Envelope[T ResI] struct {
-	Body *T
-	*http.Response
-}
-
-func newResponse[T ResI](pBody *T, res *http.Response) *Envelope[T] {
-	r := Envelope[T]{
-		Body:     pBody,
+func newResponse[T ResI](body *T, res *http.Response) *Envelope[T] {
+	env := Envelope[T]{
+		Body:     body,
 		Response: res,
 	}
-	return &r
+	return &env
 }
 
-type ErrInvalidHttpStatus struct {
-	Res *http.Response
-}
-
-type ErrProps struct {
-	StatusCode int    `json:"status_code,omitempty"`
-	Status     string `json:"status,omitempty"`
-	ErrMessage string `json:"error_message,omitempty"`
-}
-
-func NewErrParams(statusCode int, status string, errMessage string) *ErrProps {
-	errParams := ErrProps{StatusCode: statusCode, Status: status, ErrMessage: errMessage}
+func newErrDesc(statusCode int, statusDesc string, message string) *ErrDesc {
+	errParams := ErrDesc{StatusCode: statusCode, Status: statusDesc, ErrMessage: message}
 	return &errParams
 }
 
-func (e ErrInvalidHttpStatus) Error() string {
+func (e ErrInvalidHTTPStatus) Error() string {
 	msg, err := io.ReadAll(e.Res.Body)
 	if err != nil {
 		return ""
 	}
-	errParams := NewErrParams(e.Res.StatusCode, e.Res.Status, string(msg))
-	errParamsMarshalled, err := json.Marshal(errParams)
+	errDesc := newErrDesc(e.Res.StatusCode, e.Res.Status, string(msg))
+	errDescJSON, err := json.Marshal(errDesc)
 	if err != nil {
 		return ""
 	}
-	return string(errParamsMarshalled)
+	return string(errDescJSON)
 }
 
-func (e ErrInvalidHttpStatus) UnmarshalError() (ErrProps, error) {
-	var errProps ErrProps
+func (e ErrInvalidHTTPStatus) UnmarshalError() (ErrDesc, error) {
+	var errDesc ErrDesc
 
 	reader := bytes.NewReader([]byte(e.Error()))
-	err := ReadJSON(reader, &errProps)
+	err := ReadJSON(reader, &errDesc)
 	if err != nil {
-		return ErrProps{}, err
+		return ErrDesc{}, err
 	}
 
-	return errProps, nil
+	return errDesc, nil
 }
 
-func GetErrorProperties(err error) ErrProps {
-	if !errors.As(err, &ErrInvalidHttpStatus{}) {
-		return ErrProps{}
+func GetErrorDesc(err error) ErrDesc {
+	if !errors.As(err, &ErrInvalidHTTPStatus{}) {
+		return ErrDesc{}
 	}
 
-	var errInv ErrInvalidHttpStatus
-	errors.As(err, &errInv)
-	errorProps, err := errInv.UnmarshalError()
+	var errHTTP ErrInvalidHTTPStatus
+
+	errors.As(err, &errHTTP)
+
+	errorDesc, err := errHTTP.UnmarshalError()
 	if err != nil {
-		return ErrProps{}
+		return ErrDesc{}
 	}
 
-	return errorProps
+	return errorDesc
 }
-
-type HttpMethod string
 
 func NewHTTPClient(
 	timeout time.Duration,
 	redirectPolicy func(req *http.Request, via []*http.Request) error,
-	roundTripper http.RoundTripper,
+	transport http.RoundTripper,
 ) *http.Client {
 	httpClient := http.Client{
 		Timeout:       timeout,
-		Transport:     roundTripper,
+		Transport:     transport,
 		CheckRedirect: redirectPolicy,
 	}
 	return &httpClient
@@ -136,27 +144,27 @@ func NewHTTPClient(
 
 func FetchRx[T ReqI, U ResI](
 	ctx context.Context,
-	httpClient *http.Client,
-	method HttpMethod,
+	client *http.Client,
+	method HTTPMethod,
 	endpoint string,
-	req *T,
+	request *T,
 	headers map[string]string,
 	deadline time.Duration,
-	retryInterval time.Duration,
-	retries uint64,
+	backoffInterval time.Duration,
+	backoffRetries uint64,
 	statusCodeValidator func(res *http.Response) bool,
 ) rxgo.Observable {
 	backOffCfg := backoff.NewExponentialBackOff()
-	backOffCfg.InitialInterval = retryInterval
+	backOffCfg.InitialInterval = backoffInterval
 
 	return rxgo.Defer([]rxgo.Producer{
 		func(_ context.Context, next chan<- rxgo.Item) {
 			res, err := Fetch[T, U](
 				ctx,
-				httpClient,
+				client,
 				method,
 				endpoint,
-				req,
+				request,
 				headers,
 				deadline,
 				statusCodeValidator,
@@ -166,15 +174,18 @@ func FetchRx[T ReqI, U ResI](
 			}
 			next <- rxgo.Of(res)
 		},
-	}).BackOffRetry(backoff.WithMaxRetries(backOffCfg, retries))
+	},
+	).BackOffRetry(
+		backoff.WithMaxRetries(backOffCfg, backoffRetries),
+	)
 }
 
 func Fetch[T ReqI, U ResI](
 	ctx context.Context,
-	httpClient *http.Client,
-	method HttpMethod,
+	client *http.Client,
+	method HTTPMethod,
 	endpoint string,
-	req *T,
+	request *T,
 	headers map[string]string,
 	deadline time.Duration,
 	statusCodeValidator func(res *http.Response) bool,
@@ -185,7 +196,7 @@ func Fetch[T ReqI, U ResI](
 	var data []byte
 	var err error
 
-	reader, err := toBytesReader[T](req)
+	reader, err := toBytesReader[T](request)
 	switch err {
 	case nil:
 		break
@@ -197,12 +208,12 @@ func Fetch[T ReqI, U ResI](
 
 	switch reader {
 	case nil:
-		httpResponse, timer, err = httpCall(ctx, httpClient, endpoint, headers, nil, deadline, method, statusCodeValidator)
+		httpResponse, timer, err = httpCall(ctx, client, endpoint, headers, nil, deadline, method, statusCodeValidator)
 		if err != nil {
 			return nil, err
 		}
 	default:
-		httpResponse, timer, err = httpCall(ctx, httpClient, endpoint, headers, reader, deadline, method, statusCodeValidator)
+		httpResponse, timer, err = httpCall(ctx, client, endpoint, headers, reader, deadline, method, statusCodeValidator)
 		if err != nil {
 			return nil, err
 		}
@@ -232,7 +243,7 @@ func httpCall(
 	headers map[string]string,
 	body io.Reader,
 	deadline time.Duration,
-	method HttpMethod,
+	method HTTPMethod,
 	statusCodeValidator func(res *http.Response) bool,
 ) (*http.Response, *time.Timer, error) {
 	return do(ctx, client, url, method, headers, body, deadline, statusCodeValidator)
@@ -242,7 +253,7 @@ func do(
 	ctx context.Context,
 	client *http.Client,
 	url string,
-	method HttpMethod,
+	method HTTPMethod,
 	headers map[string]string,
 	body io.Reader,
 	deadline time.Duration,
@@ -251,43 +262,42 @@ func do(
 	var res *http.Response
 	var err error
 
-	toCtx, cancel := context.WithCancel(ctx)
+	withCancelCtx, cancel := context.WithCancel(ctx)
 	timer := time.AfterFunc(deadline, func() {
 		cancel()
 	})
 
-	req, err := http.NewRequestWithContext(toCtx, string(method), url, body)
+	request, err := http.NewRequestWithContext(withCancelCtx, string(method), url, body)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if headers != nil {
-		for k, v := range headers {
-			req.Header.Add(k, v)
-		}
+	for k, v := range headers {
+		request.Header.Add(k, v)
 	}
 
-	res, err = client.Do(req)
+	res, err = client.Do(request)
 	switch err {
 	case nil:
 
 		if statusCodeValidator(res) {
-			return nil, timer, ErrInvalidHttpStatus{res}
+			return nil, timer, ErrInvalidHTTPStatus{res}
 		}
+
 		return res, timer, nil
 
 	default:
 
 		if errors.Is(err, context.Canceled) {
-			return nil, nil, fmt.Errorf("service at %q %w", req.URL, ErrTimeOut)
+			return nil, nil, fmt.Errorf("service at %q %w", request.URL, ErrTimeOut)
 		}
 		return nil, nil, err
 	}
 }
 
-func DefaultInvalidStatusCodeValidator(res *http.Response) bool {
-	//validate all 4XX and 5XX error status codes
-	return (res.StatusCode/100)/4 == 1 || (res.StatusCode/100)/5 == 1
+// DefaultInvalidStatusCodeValidator validate all 4XX and 5XX error status codes
+func DefaultInvalidStatusCodeValidator(response *http.Response) bool {
+	return (response.StatusCode/100)/4 == 1 || (response.StatusCode/100)/5 == 1
 }
 
 func toBytesReader[T any](value *T) (*bytes.Reader, error) {
@@ -303,16 +313,15 @@ func toBytesReader[T any](value *T) (*bytes.Reader, error) {
 	}
 }
 
-func To[T any](item rxgo.Item) (itemPointer *T, err error) {
+func To[T any](item rxgo.Item) (*T, error) {
 	switch item.V.(type) {
 	case *T:
 		return item.V.(*T), nil
 	case nil:
 		if item.E != nil {
 			return nil, item.E
-		} else {
-			return nil, ErrEmptyItem
 		}
+		return nil, ErrEmptyItem
 	case error:
 		return nil, item.V.(error)
 	default:
@@ -358,26 +367,27 @@ func ReadJSON(body io.Reader, dst any) error {
 
 		switch {
 		case errors.As(err, &syntaxError):
-			return fmt.Errorf("body contains badly-formed JSON (at character %d)", syntaxError.Offset)
+			return fmt.Errorf("%w: at character %d", ErrBadlyJSON, syntaxError.Offset)
 
 		case errors.Is(err, io.ErrUnexpectedEOF):
-			return errors.New("body contains badly-formed JSON")
+
+			return ErrBadlyJSON
 
 		case errors.As(err, &unmarshalTypeError):
 			if unmarshalTypeError.Field != "" {
-				return fmt.Errorf("body contains incorrect JSON type for field %q", unmarshalTypeError.Field)
+				return fmt.Errorf("%w for field %q", ErrBadJSONType, unmarshalTypeError.Field)
 			}
-			return fmt.Errorf("body contains incorrect JSON type (at character %d)", unmarshalTypeError.Offset)
+			return fmt.Errorf("%w at character %d", ErrBadJSONType, unmarshalTypeError.Offset)
 
 		case errors.Is(err, io.EOF):
-			return errors.New("body must not be empty")
+			return ErrEmptyBody
 
 		case strings.HasPrefix(err.Error(), "json: unknown field "):
 			fieldName := strings.TrimPrefix(err.Error(), "json: unknown field ")
-			return fmt.Errorf("body contains unknown key %s", fieldName)
+			return fmt.Errorf("%w %s", ErrBodyUnknownKey, fieldName)
 
 		case errors.As(err, &maxBytesError):
-			return fmt.Errorf("body must not be larger than %d bytes", maxBytesError.Limit)
+			return fmt.Errorf("%w. Max size is %d bytes", ErrBodySizeLimit, maxBytesError.Limit)
 
 		case errors.As(err, &invalidUnmarshalError):
 			panic(err)
@@ -389,7 +399,7 @@ func ReadJSON(body io.Reader, dst any) error {
 
 	err = dec.Decode(&struct{}{})
 	if !errors.Is(err, io.EOF) {
-		return errors.New("body must only contain a single JSON value")
+		return ErrBodyValue
 	}
 
 	return nil

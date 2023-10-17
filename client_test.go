@@ -19,63 +19,30 @@ import (
 	"time"
 )
 
-type nonSerdeType string
+type (
+	nonSerdeType string
 
-type envelope map[string]any
+	envelope map[string]any
 
-func (n *nonSerdeType) UnmarshalJSON(_ []byte) error {
-	return errors.New("non-serde struct")
-}
+	CreateUserV1Req struct {
+		Name  string `json:"name,omitempty"`
+		Email string `json:"email,omitempty"`
+	}
 
-func (n nonSerdeType) MarshalJSON() ([]byte, error) {
-	return nil, errors.New("non-serde struct")
-}
+	UserRes struct {
+		ID string `json:"id,omitempty"`
+	}
 
-type CreateUserV1Req struct {
-	Name  string `json:"name,omitempty"`
-	Email string `json:"email,omitempty"`
-}
+	GetUserV1Res struct {
+		Name      string `json:"name,omitempty"`
+		SmsNumber string `json:"sms_number,omitempty"`
+		Enabled   bool   `json:"enabled,omitempty"`
+	}
 
-func newCreateUserV1Req(name string, email string) CreateUserV1Req {
-	return CreateUserV1Req{Name: name, Email: email}
-}
-
-func (CreateUserV1Req) Req() {}
-
-type UserRes struct {
-	ID string `json:"id,omitempty"`
-}
-
-func (UserRes) Res() {}
-
-type GetUserV1Res struct {
-	Name      string `json:"name,omitempty"`
-	SmsNumber string `json:"sms_number,omitempty"`
-	Enabled   bool   `json:"enabled,omitempty"`
-}
-
-func newGetUserV1Res(name string, smsNumber string, enabled bool) GetUserV1Res {
-	return GetUserV1Res{Name: name, SmsNumber: smsNumber, Enabled: enabled}
-}
-
-type GetUserEnvV1Res struct {
-	User GetUserV1Res `json:"user,omitempty"`
-}
-
-func newGetUserEnvV1Res(user GetUserV1Res) *GetUserEnvV1Res {
-	return &GetUserEnvV1Res{User: user}
-}
-
-func (g GetUserEnvV1Res) Res() {}
-
-func newCreateUserRes(id string) UserRes {
-	return UserRes{ID: id}
-}
-
-func newTestServer(handler func(http.ResponseWriter, *http.Request)) *httptest.Server {
-	ts := httptest.NewServer(http.HandlerFunc(handler))
-	return ts
-}
+	GetUserEnvV1Res struct {
+		User GetUserV1Res `json:"user,omitempty"`
+	}
+)
 
 var (
 	nonSerde = func() nonSerdeType {
@@ -105,7 +72,7 @@ var (
 			transport.IdleConnectionTimeout(ConnTimeOut),
 		)
 	}()
-	customHeadersHttpClient = func(headers middleware.CustomHeaders) *http.Client {
+	customHeadersHTTPClient = func(headers middleware.CustomHeaders) *http.Client {
 		return NewHTTPClient(
 			5*time.Second,
 			policy.OneRedirect,
@@ -145,22 +112,57 @@ var (
 	}
 )
 
+func (n *nonSerdeType) UnmarshalJSON(_ []byte) error {
+	return errors.New("non-serde struct")
+}
+
+func (n nonSerdeType) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("non-serde struct")
+}
+
+func newCreateUserV1Req(name string, email string) CreateUserV1Req {
+	return CreateUserV1Req{Name: name, Email: email}
+}
+
+func (CreateUserV1Req) Req() {}
+
+func (UserRes) Res() {}
+
+func newGetUserV1Res(name string, smsNumber string, enabled bool) GetUserV1Res {
+	return GetUserV1Res{Name: name, SmsNumber: smsNumber, Enabled: enabled}
+}
+
+func newGetUserEnvV1Res(user GetUserV1Res) *GetUserEnvV1Res {
+	return &GetUserEnvV1Res{User: user}
+}
+
+func (g GetUserEnvV1Res) Res() {}
+
+func newCreateUserRes(id string) UserRes {
+	return UserRes{ID: id}
+}
+
+func newTestServer(handler func(http.ResponseWriter, *http.Request)) *httptest.Server {
+	ts := httptest.NewServer(http.HandlerFunc(handler))
+	return ts
+}
+
 func TestFetchingWithClientHeadersReturnsClientHeaders(t *testing.T) {
 	t.Parallel()
 
-	customClient := customHeadersHttpClient(middleware.NewCustomHeaders(headers))
+	customClient := customHeadersHTTPClient(middleware.NewCustomHeaders(headers))
 	ts := headerEchoSvr()
 	defer ts.Close()
 
 	cases := map[string]struct {
 		client              *http.Client
-		httpMethod          HttpMethod
+		httpMethod          HTTPMethod
 		url                 string
 		request             io.Reader
 		headers             map[string]string
 		deadline            time.Duration
-		retryInterval       time.Duration
-		retries             uint64
+		backoffInterval     time.Duration
+		backoffRetries      uint64
 		statusCodeValidator func(res *http.Response) bool
 		cxt                 context.Context
 		want                map[string]string
@@ -172,9 +174,9 @@ func TestFetchingWithClientHeadersReturnsClientHeaders(t *testing.T) {
 			request:             nil,
 			headers:             nil,
 			httpMethod:          Get,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                headers,
 		},
@@ -213,13 +215,13 @@ func TestFetchingWithContextHeadersReturnsContextHeaders(t *testing.T) {
 
 	cases := map[string]struct {
 		client              *http.Client
-		httpMethod          HttpMethod
+		httpMethod          HTTPMethod
 		url                 string
 		request             io.Reader
 		headers             map[string]string
 		deadline            time.Duration
-		retryInterval       time.Duration
-		retries             uint64
+		backoffInterval     time.Duration
+		backoffRetries      uint64
 		statusCodeValidator func(res *http.Response) bool
 		cxt                 context.Context
 		want                map[string]string
@@ -231,9 +233,9 @@ func TestFetchingWithContextHeadersReturnsContextHeaders(t *testing.T) {
 			request:             nil,
 			headers:             headers,
 			httpMethod:          Get,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                headers,
 		},
@@ -271,13 +273,13 @@ func TestFetchingSlowServerReturnsContextCanceledError(t *testing.T) {
 
 	cases := map[string]struct {
 		client              *http.Client
-		httpMethod          HttpMethod
+		httpMethod          HTTPMethod
 		url                 string
 		request             io.Reader
 		headers             map[string]string
 		deadline            time.Duration
-		retryInterval       time.Duration
-		retries             uint64
+		backoffInterval     time.Duration
+		backoffRetries      uint64
 		statusCodeValidator func(res *http.Response) bool
 		cxt                 context.Context
 		want                error
@@ -290,8 +292,8 @@ func TestFetchingSlowServerReturnsContextCanceledError(t *testing.T) {
 			headers:             nil,
 			httpMethod:          Post,
 			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                ErrTimeOut,
 		},
@@ -635,13 +637,13 @@ func TestFetchingWithNilBodyReturnsNonEmptyRes(t *testing.T) {
 
 	cases := map[string]struct {
 		client              *http.Client
-		httpMethod          HttpMethod
+		httpMethod          HTTPMethod
 		url                 string
 		request             *NoReq
 		headers             map[string]string
 		deadline            time.Duration
-		retryInterval       time.Duration
-		retries             uint64
+		backoffInterval     time.Duration
+		backoffRetries      uint64
 		statusCodeValidator func(res *http.Response) bool
 		cxt                 context.Context
 		want                *GetUserEnvV1Res
@@ -653,9 +655,9 @@ func TestFetchingWithNilBodyReturnsNonEmptyRes(t *testing.T) {
 			request:             nil,
 			headers:             nil,
 			httpMethod:          Get,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                userEnvRes,
 		},
@@ -666,9 +668,9 @@ func TestFetchingWithNilBodyReturnsNonEmptyRes(t *testing.T) {
 			request:             nil,
 			headers:             nil,
 			httpMethod:          Delete,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                userEnvRes,
 		},
@@ -679,9 +681,9 @@ func TestFetchingWithNilBodyReturnsNonEmptyRes(t *testing.T) {
 			request:             nil,
 			headers:             nil,
 			httpMethod:          Post,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                userEnvRes,
 		},
@@ -692,9 +694,9 @@ func TestFetchingWithNilBodyReturnsNonEmptyRes(t *testing.T) {
 			request:             nil,
 			headers:             nil,
 			httpMethod:          Put,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                userEnvRes,
 		},
@@ -705,9 +707,9 @@ func TestFetchingWithNilBodyReturnsNonEmptyRes(t *testing.T) {
 			request:             nil,
 			headers:             nil,
 			httpMethod:          Patch,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                userEnvRes,
 		},
@@ -723,8 +725,8 @@ func TestFetchingWithNilBodyReturnsNonEmptyRes(t *testing.T) {
 				tc.request,
 				tc.headers,
 				tc.deadline,
-				tc.retryInterval,
-				tc.retries,
+				tc.backoffInterval,
+				tc.backoffRetries,
 				tc.statusCodeValidator,
 			).Observe()
 
@@ -747,13 +749,13 @@ func TestFetchingWithNonNilBodyReturnsNonEmptyRes(t *testing.T) {
 
 	cases := map[string]struct {
 		client              *http.Client
-		httpMethod          HttpMethod
+		httpMethod          HTTPMethod
 		url                 string
 		request             CreateUserV1Req
 		headers             map[string]string
 		deadline            time.Duration
-		retryInterval       time.Duration
-		retries             uint64
+		backoffInterval     time.Duration
+		backoffRetries      uint64
 		statusCodeValidator func(res *http.Response) bool
 		cxt                 context.Context
 		want                *GetUserEnvV1Res
@@ -765,9 +767,9 @@ func TestFetchingWithNonNilBodyReturnsNonEmptyRes(t *testing.T) {
 			request:             cuReq,
 			headers:             nil,
 			httpMethod:          Post,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                userEnvRes,
 		},
@@ -778,9 +780,9 @@ func TestFetchingWithNonNilBodyReturnsNonEmptyRes(t *testing.T) {
 			request:             cuReq,
 			headers:             nil,
 			httpMethod:          Put,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                userEnvRes,
 		},
@@ -791,9 +793,9 @@ func TestFetchingWithNonNilBodyReturnsNonEmptyRes(t *testing.T) {
 			request:             cuReq,
 			headers:             nil,
 			httpMethod:          Patch,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                userEnvRes,
 		},
@@ -809,8 +811,8 @@ func TestFetchingWithNonNilBodyReturnsNonEmptyRes(t *testing.T) {
 				&tc.request,
 				tc.headers,
 				tc.deadline,
-				tc.retryInterval,
-				tc.retries,
+				tc.backoffInterval,
+				tc.backoffRetries,
 				tc.statusCodeValidator,
 			).Observe()
 
@@ -833,13 +835,13 @@ func TestFetchingWithNilBodyReturnsNotFoundErr(t *testing.T) {
 
 	cases := map[string]struct {
 		client              *http.Client
-		httpMethod          HttpMethod
+		httpMethod          HTTPMethod
 		url                 string
 		request             *NoReq
 		headers             map[string]string
 		deadline            time.Duration
-		retryInterval       time.Duration
-		retries             uint64
+		backoffInterval     time.Duration
+		backoffRetries      uint64
 		statusCodeValidator func(res *http.Response) bool
 		cxt                 context.Context
 		want                *NoRes
@@ -851,9 +853,9 @@ func TestFetchingWithNilBodyReturnsNotFoundErr(t *testing.T) {
 			request:             nil,
 			headers:             nil,
 			httpMethod:          Get,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                nil,
 		},
@@ -864,9 +866,9 @@ func TestFetchingWithNilBodyReturnsNotFoundErr(t *testing.T) {
 			request:             nil,
 			headers:             nil,
 			httpMethod:          Delete,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                nil,
 		},
@@ -877,9 +879,9 @@ func TestFetchingWithNilBodyReturnsNotFoundErr(t *testing.T) {
 			request:             nil,
 			headers:             nil,
 			httpMethod:          Post,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                nil,
 		},
@@ -890,9 +892,9 @@ func TestFetchingWithNilBodyReturnsNotFoundErr(t *testing.T) {
 			request:             nil,
 			headers:             nil,
 			httpMethod:          Put,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                nil,
 		},
@@ -903,9 +905,9 @@ func TestFetchingWithNilBodyReturnsNotFoundErr(t *testing.T) {
 			request:             nil,
 			headers:             nil,
 			httpMethod:          Patch,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                nil,
 		},
@@ -921,8 +923,8 @@ func TestFetchingWithNilBodyReturnsNotFoundErr(t *testing.T) {
 				tc.request,
 				tc.headers,
 				tc.deadline,
-				tc.retryInterval,
-				tc.retries,
+				tc.backoffInterval,
+				tc.backoffRetries,
 				tc.statusCodeValidator,
 			).Observe()
 
@@ -935,8 +937,8 @@ func TestFetchingWithNilBodyReturnsNotFoundErr(t *testing.T) {
 					t.Fatal(errors.New("envelop is not nil"))
 				}
 
-				if errors.As(err, &ErrInvalidHttpStatus{}) {
-					errProps := GetErrorProperties(err)
+				if errors.As(err, &ErrInvalidHTTPStatus{}) {
+					errProps := GetErrorDesc(err)
 					if errProps.StatusCode != http.StatusNotFound {
 						t.Fatal(err)
 					}
@@ -953,13 +955,13 @@ func TestFetchingWithNonNilBodyReturnsNotFoundErr(t *testing.T) {
 
 	cases := map[string]struct {
 		client              *http.Client
-		httpMethod          HttpMethod
+		httpMethod          HTTPMethod
 		url                 string
 		request             *CreateUserV1Req
 		headers             map[string]string
 		deadline            time.Duration
-		retryInterval       time.Duration
-		retries             uint64
+		backoffInterval     time.Duration
+		backoffRetries      uint64
 		statusCodeValidator func(res *http.Response) bool
 		cxt                 context.Context
 		want                *NoRes
@@ -971,9 +973,9 @@ func TestFetchingWithNonNilBodyReturnsNotFoundErr(t *testing.T) {
 			request:             &cuReq,
 			headers:             nil,
 			httpMethod:          Get,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                nil,
 		},
@@ -984,9 +986,9 @@ func TestFetchingWithNonNilBodyReturnsNotFoundErr(t *testing.T) {
 			request:             &cuReq,
 			headers:             nil,
 			httpMethod:          Delete,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                nil,
 		},
@@ -997,9 +999,9 @@ func TestFetchingWithNonNilBodyReturnsNotFoundErr(t *testing.T) {
 			request:             &cuReq,
 			headers:             nil,
 			httpMethod:          Post,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                nil,
 		},
@@ -1010,9 +1012,9 @@ func TestFetchingWithNonNilBodyReturnsNotFoundErr(t *testing.T) {
 			request:             &cuReq,
 			headers:             nil,
 			httpMethod:          Put,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                nil,
 		},
@@ -1023,9 +1025,9 @@ func TestFetchingWithNonNilBodyReturnsNotFoundErr(t *testing.T) {
 			request:             &cuReq,
 			headers:             nil,
 			httpMethod:          Patch,
-			deadline:            10 * time.Millisecond,
-			retryInterval:       15 * time.Millisecond,
-			retries:             1,
+			deadline:            time.Second,
+			backoffInterval:     150 * time.Millisecond,
+			backoffRetries:      3,
 			statusCodeValidator: DefaultInvalidStatusCodeValidator,
 			want:                nil,
 		},
@@ -1041,8 +1043,8 @@ func TestFetchingWithNonNilBodyReturnsNotFoundErr(t *testing.T) {
 				tc.request,
 				tc.headers,
 				tc.deadline,
-				tc.retryInterval,
-				tc.retries,
+				tc.backoffInterval,
+				tc.backoffRetries,
 				tc.statusCodeValidator,
 			).Observe()
 
@@ -1055,8 +1057,8 @@ func TestFetchingWithNonNilBodyReturnsNotFoundErr(t *testing.T) {
 					t.Fatal(errors.New("envelop is not nil"))
 				}
 
-				if errors.As(err, &ErrInvalidHttpStatus{}) {
-					errProps := GetErrorProperties(err)
+				if errors.As(err, &ErrInvalidHTTPStatus{}) {
+					errProps := GetErrorDesc(err)
 					if errProps.StatusCode != http.StatusNotFound {
 						t.Fatal(err)
 					}
@@ -1073,10 +1075,8 @@ func getUserHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := write(w, http.StatusOK, env, nil)
 	if err != nil {
-		serverErrorResponse(w, r, err)
+		serverErrorResponse(w, r)
 	}
-
-	return
 }
 
 func headerEchoHandler(w http.ResponseWriter, r *http.Request) {
@@ -1090,10 +1090,8 @@ func headerEchoHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := write(w, http.StatusOK, env, nil)
 	if err != nil {
-		serverErrorResponse(w, r, err)
+		serverErrorResponse(w, r)
 	}
-
-	return
 }
 
 func slowUpsertUserHandler(w http.ResponseWriter, r *http.Request) {
@@ -1119,15 +1117,12 @@ func upsertUserHandler(w http.ResponseWriter, r *http.Request) {
 
 	err = write(w, http.StatusOK, env, nil)
 	if err != nil {
-		serverErrorResponse(w, r, err)
+		serverErrorResponse(w, r)
 	}
-
-	return
 }
 
 func notFoundHandler(w http.ResponseWriter, r *http.Request) {
 	errorResponse(w, r, http.StatusNotFound, errors.New("user not found"))
-	return
 }
 
 func unmarshalReq[T ReqI](req *http.Request) (*T, error) {
@@ -1145,7 +1140,7 @@ func unmarshalReq[T ReqI](req *http.Request) (*T, error) {
 	return &genReq, nil
 }
 
-func errorResponse(w http.ResponseWriter, r *http.Request, status int, message any) {
+func errorResponse(w http.ResponseWriter, _ *http.Request, status int, message any) {
 	env := envelope{"error": message}
 
 	err := write(w, status, env, nil)
@@ -1168,12 +1163,12 @@ func write(w http.ResponseWriter, status int, data envelope, headers http.Header
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	w.Write(js)
+	_, _ = w.Write(js)
 
 	return nil
 }
 
-func serverErrorResponse(w http.ResponseWriter, r *http.Request, err error) {
+func serverErrorResponse(w http.ResponseWriter, r *http.Request) {
 	message := "the server encountered a problem and could not process your request"
 	errorResponse(w, r, http.StatusInternalServerError, message)
 }
