@@ -40,7 +40,7 @@ The Roku REST client provides a straightforward and simple interface for interac
   <br>**redirectPolicy**: Its purpose is to allow you to control how the HTTP client handles 3xx redirection responses.<br>
   <br>**transport**: Its purpose is to allow you to have more granular control over how HTTP requests are made and how network connections are managed.<br>
   
-  * <br>Example:<br>
+  * Example:<br>
   ````
   NewHTTPClient(
   	5*time.Second,
