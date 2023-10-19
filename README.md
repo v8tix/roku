@@ -50,7 +50,7 @@ The Roku REST client provides a straightforward and simple interface for interac
   ```` 
   <br>The OneRedirect and IdleConnectionTimeout functions are examples of how the Golang REST client can be configured and are part of Roku.<br>    
 
-*Once our client is configured, we can start configuring the functions provided by Roku: Fetch and FetchRx. The difference between them is that Fetch does not provide a backoff mechanism and does not return the response as an observable. For production environments, we recommend using FetchRx.
+*Once our client is configured, we can start configuring the functions provided by Roku: Fetch and FetchRx. The difference between them is that Fetch does not provide a backoff mechanism and does not return the response as an observable. For production environments, we recommend using Rx.
 
   * FetchRx signature:<br>
 ````
@@ -72,7 +72,7 @@ func FetchRx[T ReqI, U ResI](
   * FetchRx example:<br>
 
 ````
-  ch := FetchRxFetchRx[CreateUserV1Req, GetUserEnvV1Res](
+  ch := FetchRx[CreateUserV1Req, GetUserEnvV1Res](
           context.Background(),
           client,
           roku.Put,
