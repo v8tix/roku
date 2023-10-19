@@ -137,7 +137,7 @@ func FetchRx[T ReqI, U ResI](
       return nil
     default:
       if errors.As(err, &roku.ErrInvalidHttpStatus{}) {
-        errDesc := roku.GetErrorDesc(err)(err)
+        errDesc := roku.GetErrorDesc(err)
         return fmt.Errorf("http error: %v", errDesc)
       }
   }
