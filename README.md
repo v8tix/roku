@@ -40,14 +40,14 @@ The Roku REST client provides a straightforward and simple interface for interac
   <br>**redirectPolicy**: Its purpose is to allow you to control how the HTTP client handles 3xx redirection responses.<br>
   <br>**transport**: Its purpose is to allow you to have more granular control over how HTTP requests are made and how network connections are managed.<br>
   <br>
-    * Example:
-      ````
-      NewHTTPClient(
-        5*time.Second,
-        policy.OneRedirect,
-        transport.IdleConnectionTimeout(ConnTimeOut),
-      )
-      ```` 
+  * Example:
+  ````
+  NewHTTPClient(
+  	5*time.Second,
+  	policy.OneRedirect,
+  	transport.IdleConnectionTimeout(ConnTimeOut),
+  )
+  ```` 
   <br>The OneRedirect and IdleConnectionTimeout functions are examples of how the Golang REST client can be configured and are part of Roku.<br>    
 
 *Once our client is configured, we can start configuring the functions provided by Roku: Fetch and FetchRx. The difference between them is that Fetch does not provide a backoff mechanism and does not return the response as an observable. For production environments, we recommend using FetchRx.
