@@ -94,8 +94,8 @@ func FetchRx[T ReqI, U ResI](
       }
     default:
       if errors.As(err, &ErrInvalidHTTPStatus{}) {
-        errProps := GetErrorDesc(err)
-        return fmt.Errorf("http error: %v", errProps)      
+        errDesc := roku.GetErrorDesc(err)
+        return fmt.Errorf("http error: %v", errDesc)      
       }
   }
 ```` 
@@ -137,8 +137,8 @@ func FetchRx[T ReqI, U ResI](
       return nil
     default:
       if errors.As(err, &roku.ErrInvalidHttpStatus{}) {
-        errProps := roku.GetErrorProperties(err)
-        return fmt.Errorf("http error: %v", errProps)
+        errDesc := roku.GetErrorDesc(err)(err)
+        return fmt.Errorf("http error: %v", errDesc)
       }
   }
 ```` 
