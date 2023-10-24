@@ -64,7 +64,7 @@ func FetchRx[T ReqI, U ResI](
   deadline time.Duration,
   backoffInterval time.Duration,
   backoffRetries uint64,
-  statusCodeValidator func(res *http.Response) bool,
+  statusCodeValidator ...func(res *http.Response) bool,
 ) rxgo.Observable {
   ...
 }
@@ -82,7 +82,6 @@ func FetchRx[T ReqI, U ResI](
           time.Second,
           150 * time.Millisecond,
           3,
-          roku.DefaultInvalidStatusCodeValidator,
   ).Observe()
 
   res, err := roku.To[roku.Envelope[GetUserEnvV1Res]](<-ch)
@@ -128,7 +127,6 @@ func FetchRx[T ReqI, U ResI](
     roku.DeadLine,
     roku.RetryInterval,
     3,
-    roku.DefaultInvalidStatusCodeValidator,
   ).Observe()
 
   _, err := roku.To[roku.Envelope[roku.NoRes]](<-ch)
@@ -141,9 +139,7 @@ func FetchRx[T ReqI, U ResI](
         return fmt.Errorf("http error: %v", errDesc)
       }
   }
-```` 
-  * The DefaultInvalidStatusCodeValidator function is a utility that allows you to check for error status codes in the 4xx and 5xx range of responses. The error it returns is of type ErrInvalidHTTPStatus. The latter is a wrapper for a pointer of type *http.Response.<br>
-    <br>
+````
   * **deadline**: It enables FetchRx to block requests to the service, preventing both overloading and cascading failures.<br>
     <br>
   * **backoffInterval**: It represents a waiting period in which FetchRx delays before attempting to retry a failed request.<br>

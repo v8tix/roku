@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -24,23 +25,23 @@ type (
 
 	envelope map[string]any
 
-	CreateUserV1Req struct {
+	createUserV1Req struct {
 		Name  string `json:"name,omitempty"`
 		Email string `json:"email,omitempty"`
 	}
 
-	UserRes struct {
+	userResV struct {
 		ID string `json:"id,omitempty"`
 	}
 
-	GetUserV1Res struct {
+	getUserV1Res struct {
 		Name      string `json:"name,omitempty"`
 		SmsNumber string `json:"sms_number,omitempty"`
 		Enabled   bool   `json:"enabled,omitempty"`
 	}
 
-	GetUserEnvV1Res struct {
-		User GetUserV1Res `json:"user,omitempty"`
+	getUserEnvV1Res struct {
+		User getUserV1Res `json:"user,omitempty"`
 	}
 )
 
@@ -49,8 +50,7 @@ var (
 		return ""
 	}()
 	badlyFormed = func() io.Reader {
-		data := []byte("{ \"name\" : \"Marco\"")
-		return bytes.NewReader(data)
+		return strings.NewReader("{ \"name\" : \"Marco\"")
 	}()
 	linkHeader = func() map[string]string {
 		return map[string]string{
@@ -79,20 +79,20 @@ var (
 			headers,
 		)
 	}
-	userRes = func() GetUserV1Res {
+	userRes = func() getUserV1Res {
 		return newGetUserV1Res("Marco", "1800-some-number", false)
 	}()
-	userEnvRes = func() *GetUserEnvV1Res {
+	userEnvRes = func() *getUserEnvV1Res {
 		return newGetUserEnvV1Res(userRes)
 	}()
-	cuReq = func() CreateUserV1Req {
+	cuReq = func() createUserV1Req {
 		return newCreateUserV1Req("Adam Smith", "adam.smith@hotmail.com")
 	}()
 	cuReqReader = func() *bytes.Reader {
 		b, _ := json.Marshal(cuReq)
 		return bytes.NewReader(b)
 	}
-	cuRes = func() UserRes {
+	cuRes = func() userResV {
 		return newCreateUserRes("c9f9b69d-4321-40bb-bac9-3cb832648232")
 	}()
 	upsertUserSvr = func() *httptest.Server {
@@ -120,26 +120,26 @@ func (n nonSerdeType) MarshalJSON() ([]byte, error) {
 	return nil, errors.New("non-serde struct")
 }
 
-func newCreateUserV1Req(name string, email string) CreateUserV1Req {
-	return CreateUserV1Req{Name: name, Email: email}
+func newCreateUserV1Req(name string, email string) createUserV1Req {
+	return createUserV1Req{Name: name, Email: email}
 }
 
-func (CreateUserV1Req) Req() {}
+func (createUserV1Req) Req() {}
 
-func (UserRes) Res() {}
+func (userResV) Res() {}
 
-func newGetUserV1Res(name string, smsNumber string, enabled bool) GetUserV1Res {
-	return GetUserV1Res{Name: name, SmsNumber: smsNumber, Enabled: enabled}
+func newGetUserV1Res(name string, smsNumber string, enabled bool) getUserV1Res {
+	return getUserV1Res{Name: name, SmsNumber: smsNumber, Enabled: enabled}
 }
 
-func newGetUserEnvV1Res(user GetUserV1Res) *GetUserEnvV1Res {
-	return &GetUserEnvV1Res{User: user}
+func newGetUserEnvV1Res(user getUserV1Res) *getUserEnvV1Res {
+	return &getUserEnvV1Res{User: user}
 }
 
-func (g GetUserEnvV1Res) Res() {}
+func (g getUserEnvV1Res) Res() {}
 
-func newCreateUserRes(id string) UserRes {
-	return UserRes{ID: id}
+func newCreateUserRes(id string) userResV {
+	return userResV{ID: id}
 }
 
 func newTestServer(handler func(http.ResponseWriter, *http.Request)) *httptest.Server {
@@ -155,30 +155,28 @@ func TestFetchingWithClientHeadersReturnsClientHeaders(t *testing.T) {
 	defer ts.Close()
 
 	cases := map[string]struct {
-		client              *http.Client
-		httpMethod          HTTPMethod
-		url                 string
-		request             io.Reader
-		headers             map[string]string
-		deadline            time.Duration
-		backoffInterval     time.Duration
-		backoffRetries      uint64
-		statusCodeValidator func(res *http.Response) bool
-		cxt                 context.Context
-		want                map[string]string
+		client          *http.Client
+		httpMethod      HTTPMethod
+		url             string
+		request         io.Reader
+		headers         map[string]string
+		deadline        time.Duration
+		backoffInterval time.Duration
+		backoffRetries  uint64
+		cxt             context.Context
+		want            map[string]string
 	}{
 		"with custom headers": {
-			cxt:                 context.Background(),
-			client:              customClient,
-			url:                 ts.URL,
-			request:             nil,
-			headers:             nil,
-			httpMethod:          Get,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                headers,
+			cxt:             context.Background(),
+			client:          customClient,
+			url:             ts.URL,
+			request:         nil,
+			headers:         nil,
+			httpMethod:      Get,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            headers,
 		},
 	}
 
@@ -192,7 +190,7 @@ func TestFetchingWithClientHeadersReturnsClientHeaders(t *testing.T) {
 				tc.request,
 				tc.deadline,
 				Get,
-				DefaultInvalidStatusCodeValidator,
+				defaultInvalidStatusCodeValidator,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -236,7 +234,7 @@ func TestFetchingWithContextHeadersReturnsContextHeaders(t *testing.T) {
 			deadline:            time.Second,
 			backoffInterval:     150 * time.Millisecond,
 			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			statusCodeValidator: defaultInvalidStatusCodeValidator,
 			want:                headers,
 		},
 	}
@@ -251,7 +249,7 @@ func TestFetchingWithContextHeadersReturnsContextHeaders(t *testing.T) {
 				tc.request,
 				tc.deadline,
 				Get,
-				DefaultInvalidStatusCodeValidator,
+				defaultInvalidStatusCodeValidator,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -294,7 +292,7 @@ func TestFetchingSlowServerReturnsContextCanceledError(t *testing.T) {
 			deadline:            10 * time.Millisecond,
 			backoffInterval:     150 * time.Millisecond,
 			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
+			statusCodeValidator: defaultInvalidStatusCodeValidator,
 			want:                ErrTimeOut,
 		},
 	}
@@ -309,7 +307,7 @@ func TestFetchingSlowServerReturnsContextCanceledError(t *testing.T) {
 				tc.request,
 				tc.deadline,
 				tc.httpMethod,
-				DefaultInvalidStatusCodeValidator,
+				tc.statusCodeValidator,
 			)
 			switch err {
 			case nil:
@@ -333,7 +331,7 @@ func TestCastingWithValidValueReturnsValidValue(t *testing.T) {
 
 	cases := map[string]struct {
 		input rxgo.Item
-		want  *UserRes
+		want  *userResV
 	}{
 		"with valid value": {
 			input: item,
@@ -343,7 +341,7 @@ func TestCastingWithValidValueReturnsValidValue(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := To[UserRes](tc.input)
+			_, err := To[userResV](tc.input)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -369,7 +367,7 @@ func TestCastingWithANonPointerValueReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := To[UserRes](tc.input)
+			_, err := To[userResV](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -395,7 +393,7 @@ func TestCastingWithErrorValueReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := To[UserRes](tc.input)
+			_, err := To[userResV](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -422,7 +420,7 @@ func TestCastingWithEmptyItemValueReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := To[UserRes](tc.input)
+			_, err := To[userResV](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -448,7 +446,7 @@ func TestCastingWithNilValueAndNilErrorReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := To[UserRes](tc.input)
+			_, err := To[userResV](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -477,7 +475,7 @@ func TestCastingWithNilValueAndErrorReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := To[UserRes](tc.input)
+			_, err := To[userResV](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -503,7 +501,7 @@ func TestCastingWithUnknownTypeValueReturnsErrUnknownType(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := To[CreateUserV1Req](tc.input)
+			_, err := To[createUserV1Req](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -514,10 +512,10 @@ func TestCastingWithUnknownTypeValueReturnsErrUnknownType(t *testing.T) {
 func TestConvertingRequestToBytesReaderWithNilRequestReturnsError(t *testing.T) {
 	t.Parallel()
 
-	var req *CreateUserV1Req
+	var req *createUserV1Req
 
 	cases := map[string]struct {
-		input *CreateUserV1Req
+		input *createUserV1Req
 		want  error
 	}{
 		"with nil request": {
@@ -528,7 +526,7 @@ func TestConvertingRequestToBytesReaderWithNilRequestReturnsError(t *testing.T) 
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := toBytesReader[CreateUserV1Req](tc.input)
+			_, err := toBytesReader[createUserV1Req](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -540,7 +538,7 @@ func TestConvertingRequestToBytesReaderWithNonNilRequestReturnsReader(t *testing
 	t.Parallel()
 
 	cases := map[string]struct {
-		input *CreateUserV1Req
+		input *createUserV1Req
 		want  error
 	}{
 		"with valid request": {
@@ -551,7 +549,7 @@ func TestConvertingRequestToBytesReaderWithNonNilRequestReturnsReader(t *testing
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := toBytesReader[CreateUserV1Req](tc.input)
+			_, err := toBytesReader[createUserV1Req](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Fatal(err)
 			}
@@ -599,7 +597,7 @@ func TestUnmarshallingRequestWithNilRequestReturnsError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, err := unmarshalReq[CreateUserV1Req](tc.input)
+			_, err := unmarshalReq[createUserV1Req](tc.input)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("wrong error: %v", err)
 			}
@@ -610,7 +608,7 @@ func TestUnmarshallingRequestWithNilRequestReturnsError(t *testing.T) {
 func TestReadJsonWithBadJsonReturnsError(t *testing.T) {
 	t.Parallel()
 
-	var req CreateUserV1Req
+	var req createUserV1Req
 
 	cases := map[string]struct {
 		input io.Reader
@@ -636,88 +634,82 @@ func TestFetchingWithNilBodyReturnsNonEmptyRes(t *testing.T) {
 	defer ts.Close()
 
 	cases := map[string]struct {
-		client              *http.Client
-		httpMethod          HTTPMethod
-		url                 string
-		request             *NoReq
-		headers             map[string]string
-		deadline            time.Duration
-		backoffInterval     time.Duration
-		backoffRetries      uint64
-		statusCodeValidator func(res *http.Response) bool
-		cxt                 context.Context
-		want                *GetUserEnvV1Res
+		client          *http.Client
+		httpMethod      HTTPMethod
+		url             string
+		request         *NoReq
+		headers         map[string]string
+		deadline        time.Duration
+		backoffInterval time.Duration
+		backoffRetries  uint64
+		cxt             context.Context
+		want            *getUserEnvV1Res
 	}{
 		"with get method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             nil,
-			headers:             nil,
-			httpMethod:          Get,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                userEnvRes,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         nil,
+			headers:         nil,
+			httpMethod:      Get,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            userEnvRes,
 		},
 		"with delete method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             nil,
-			headers:             nil,
-			httpMethod:          Delete,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                userEnvRes,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         nil,
+			headers:         nil,
+			httpMethod:      Delete,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            userEnvRes,
 		},
 		"with post method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             nil,
-			headers:             nil,
-			httpMethod:          Post,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                userEnvRes,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         nil,
+			headers:         nil,
+			httpMethod:      Post,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            userEnvRes,
 		},
 		"with put method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             nil,
-			headers:             nil,
-			httpMethod:          Put,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                userEnvRes,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         nil,
+			headers:         nil,
+			httpMethod:      Put,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            userEnvRes,
 		},
 		"with patch method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             nil,
-			headers:             nil,
-			httpMethod:          Patch,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                userEnvRes,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         nil,
+			headers:         nil,
+			httpMethod:      Patch,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            userEnvRes,
 		},
 	}
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			ch := FetchRx[NoReq, GetUserEnvV1Res](
+			ch := FetchRx[NoReq, getUserEnvV1Res](
 				tc.cxt,
 				tc.client,
 				tc.httpMethod,
@@ -727,10 +719,9 @@ func TestFetchingWithNilBodyReturnsNonEmptyRes(t *testing.T) {
 				tc.deadline,
 				tc.backoffInterval,
 				tc.backoffRetries,
-				tc.statusCodeValidator,
 			).Observe()
 
-			got, err := To[Envelope[GetUserEnvV1Res]](<-ch)
+			got, err := To[Envelope[getUserEnvV1Res]](<-ch)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -748,62 +739,58 @@ func TestFetchingWithNonNilBodyReturnsNonEmptyRes(t *testing.T) {
 	defer ts.Close()
 
 	cases := map[string]struct {
-		client              *http.Client
-		httpMethod          HTTPMethod
-		url                 string
-		request             CreateUserV1Req
-		headers             map[string]string
-		deadline            time.Duration
-		backoffInterval     time.Duration
-		backoffRetries      uint64
-		statusCodeValidator func(res *http.Response) bool
-		cxt                 context.Context
-		want                *GetUserEnvV1Res
+		client          *http.Client
+		httpMethod      HTTPMethod
+		url             string
+		request         createUserV1Req
+		headers         map[string]string
+		deadline        time.Duration
+		backoffInterval time.Duration
+		backoffRetries  uint64
+		cxt             context.Context
+		want            *getUserEnvV1Res
 	}{
 		"with post method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             cuReq,
-			headers:             nil,
-			httpMethod:          Post,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                userEnvRes,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         cuReq,
+			headers:         nil,
+			httpMethod:      Post,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            userEnvRes,
 		},
 		"with put method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             cuReq,
-			headers:             nil,
-			httpMethod:          Put,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                userEnvRes,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         cuReq,
+			headers:         nil,
+			httpMethod:      Put,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            userEnvRes,
 		},
 		"with patch method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             cuReq,
-			headers:             nil,
-			httpMethod:          Patch,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                userEnvRes,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         cuReq,
+			headers:         nil,
+			httpMethod:      Patch,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            userEnvRes,
 		},
 	}
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			ch := FetchRx[CreateUserV1Req, GetUserEnvV1Res](
+			ch := FetchRx[createUserV1Req, getUserEnvV1Res](
 				tc.cxt,
 				tc.client,
 				tc.httpMethod,
@@ -813,10 +800,9 @@ func TestFetchingWithNonNilBodyReturnsNonEmptyRes(t *testing.T) {
 				tc.deadline,
 				tc.backoffInterval,
 				tc.backoffRetries,
-				tc.statusCodeValidator,
 			).Observe()
 
-			got, err := To[Envelope[GetUserEnvV1Res]](<-ch)
+			got, err := To[Envelope[getUserEnvV1Res]](<-ch)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -834,88 +820,82 @@ func TestFetchingWithNilBodyReturnsNotFoundErr(t *testing.T) {
 	defer ts.Close()
 
 	cases := map[string]struct {
-		client              *http.Client
-		httpMethod          HTTPMethod
-		url                 string
-		request             *NoReq
-		headers             map[string]string
-		deadline            time.Duration
-		backoffInterval     time.Duration
-		backoffRetries      uint64
-		statusCodeValidator func(res *http.Response) bool
-		cxt                 context.Context
-		want                *NoRes
+		client          *http.Client
+		httpMethod      HTTPMethod
+		url             string
+		request         *NoReq
+		headers         map[string]string
+		deadline        time.Duration
+		backoffInterval time.Duration
+		backoffRetries  uint64
+		cxt             context.Context
+		want            *NoRes
 	}{
 		"with get method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             nil,
-			headers:             nil,
-			httpMethod:          Get,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                nil,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         nil,
+			headers:         nil,
+			httpMethod:      Get,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            nil,
 		},
 		"with delete method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             nil,
-			headers:             nil,
-			httpMethod:          Delete,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                nil,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         nil,
+			headers:         nil,
+			httpMethod:      Delete,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            nil,
 		},
 		"with post method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             nil,
-			headers:             nil,
-			httpMethod:          Post,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                nil,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         nil,
+			headers:         nil,
+			httpMethod:      Post,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            nil,
 		},
 		"with put method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             nil,
-			headers:             nil,
-			httpMethod:          Put,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                nil,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         nil,
+			headers:         nil,
+			httpMethod:      Put,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            nil,
 		},
 		"with patch method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             nil,
-			headers:             nil,
-			httpMethod:          Patch,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                nil,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         nil,
+			headers:         nil,
+			httpMethod:      Patch,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            nil,
 		},
 	}
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			ch := FetchRx[NoReq, GetUserEnvV1Res](
+			ch := FetchRx[NoReq, getUserEnvV1Res](
 				tc.cxt,
 				tc.client,
 				tc.httpMethod,
@@ -925,10 +905,9 @@ func TestFetchingWithNilBodyReturnsNotFoundErr(t *testing.T) {
 				tc.deadline,
 				tc.backoffInterval,
 				tc.backoffRetries,
-				tc.statusCodeValidator,
 			).Observe()
 
-			got, err := To[Envelope[GetUserEnvV1Res]](<-ch)
+			got, err := To[Envelope[getUserEnvV1Res]](<-ch)
 			switch err {
 			case nil:
 				t.Fatal(err)
@@ -938,8 +917,8 @@ func TestFetchingWithNilBodyReturnsNotFoundErr(t *testing.T) {
 				}
 
 				if errors.As(err, &ErrInvalidHTTPStatus{}) {
-					errProps := GetErrorDesc(err)
-					if errProps.StatusCode != http.StatusNotFound {
+					errDesc := GetErrorDesc(err)
+					if errDesc.StatusCode != http.StatusNotFound {
 						t.Fatal(err)
 					}
 				}
@@ -954,88 +933,82 @@ func TestFetchingWithNonNilBodyReturnsNotFoundErr(t *testing.T) {
 	defer ts.Close()
 
 	cases := map[string]struct {
-		client              *http.Client
-		httpMethod          HTTPMethod
-		url                 string
-		request             *CreateUserV1Req
-		headers             map[string]string
-		deadline            time.Duration
-		backoffInterval     time.Duration
-		backoffRetries      uint64
-		statusCodeValidator func(res *http.Response) bool
-		cxt                 context.Context
-		want                *NoRes
+		client          *http.Client
+		httpMethod      HTTPMethod
+		url             string
+		request         *createUserV1Req
+		headers         map[string]string
+		deadline        time.Duration
+		backoffInterval time.Duration
+		backoffRetries  uint64
+		cxt             context.Context
+		want            *NoRes
 	}{
 		"with get method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             &cuReq,
-			headers:             nil,
-			httpMethod:          Get,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                nil,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         &cuReq,
+			headers:         nil,
+			httpMethod:      Get,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            nil,
 		},
 		"with delete method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             &cuReq,
-			headers:             nil,
-			httpMethod:          Delete,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                nil,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         &cuReq,
+			headers:         nil,
+			httpMethod:      Delete,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            nil,
 		},
 		"with post method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             &cuReq,
-			headers:             nil,
-			httpMethod:          Post,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                nil,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         &cuReq,
+			headers:         nil,
+			httpMethod:      Post,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            nil,
 		},
 		"with put method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             &cuReq,
-			headers:             nil,
-			httpMethod:          Put,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                nil,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         &cuReq,
+			headers:         nil,
+			httpMethod:      Put,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            nil,
 		},
 		"with patch method": {
-			cxt:                 context.Background(),
-			client:              httpClient,
-			url:                 ts.URL,
-			request:             &cuReq,
-			headers:             nil,
-			httpMethod:          Patch,
-			deadline:            time.Second,
-			backoffInterval:     150 * time.Millisecond,
-			backoffRetries:      3,
-			statusCodeValidator: DefaultInvalidStatusCodeValidator,
-			want:                nil,
+			cxt:             context.Background(),
+			client:          httpClient,
+			url:             ts.URL,
+			request:         &cuReq,
+			headers:         nil,
+			httpMethod:      Patch,
+			deadline:        time.Second,
+			backoffInterval: 150 * time.Millisecond,
+			backoffRetries:  3,
+			want:            nil,
 		},
 	}
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			ch := FetchRx[CreateUserV1Req, GetUserEnvV1Res](
+			ch := FetchRx[createUserV1Req, getUserEnvV1Res](
 				tc.cxt,
 				tc.client,
 				tc.httpMethod,
@@ -1045,10 +1018,9 @@ func TestFetchingWithNonNilBodyReturnsNotFoundErr(t *testing.T) {
 				tc.deadline,
 				tc.backoffInterval,
 				tc.backoffRetries,
-				tc.statusCodeValidator,
 			).Observe()
 
-			got, err := To[Envelope[GetUserEnvV1Res]](<-ch)
+			got, err := To[Envelope[getUserEnvV1Res]](<-ch)
 			switch err {
 			case nil:
 				t.Fatal(err)
@@ -1103,7 +1075,7 @@ func upsertUserHandler(w http.ResponseWriter, r *http.Request) {
 	maxBytes := 1_048_576
 	r.Body = http.MaxBytesReader(w, r.Body, int64(maxBytes))
 
-	var req CreateUserV1Req
+	var req createUserV1Req
 
 	err := ReadJSON(r.Body, &req)
 	if err != nil {

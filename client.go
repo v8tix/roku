@@ -23,20 +23,26 @@ const (
 	ConnTimeOut = 15 * time.Second
 )
 
+type rokuErr string
+
+func (r rokuErr) Error() string {
+	return string(r)
+}
+
 var (
-	ErrTimeOut                  = errors.New("time out")
-	ErrMarshallValue            = errors.New("couldn't marshalling the value")
-	ErrBadRequest               = errors.New("bad request")
-	ErrNonPointerOrWrongCasting = errors.New("RxGo item value is not a pointer or you are using the wrong casting type")
-	ErrEmptyItem                = errors.New("RxGo item has no value and no error")
-	ErrNilValue                 = errors.New("nil value provided")
-	ErrTimerNotSet              = errors.New("timer must be set")
-	ErrBadlyJSON                = errors.New("body contains badly-formed JSON")
-	ErrBadJSONType              = errors.New("body contains incorrect JSON type")
-	ErrEmptyBody                = errors.New("body must not be empty")
-	ErrBodyUnknownKey           = errors.New("body contains unknown key")
-	ErrBodySizeLimit            = errors.New("body size limit exceeded")
-	ErrBodyValue                = errors.New("body must only contain a single JSON value")
+	ErrTimeOut                  = rokuErr("timeout occurred")
+	ErrMarshallValue            = rokuErr("failed to marshal the value to JSON")
+	ErrBadRequest               = rokuErr("bad request")
+	ErrNonPointerOrWrongCasting = rokuErr("value is not a pointer or casting type is incorrect")
+	ErrEmptyItem                = rokuErr("item has no value and no error")
+	ErrNilValue                 = rokuErr("nil value provided")
+	ErrTimerNotSet              = rokuErr("timer must be set")
+	ErrBadlyJSON                = rokuErr("badly-formed JSON in the body")
+	ErrBadJSONType              = rokuErr("incorrect JSON type in the body")
+	ErrEmptyBody                = rokuErr("body must not be empty")
+	ErrBodyUnknownKey           = rokuErr("unknown key in the body")
+	ErrBodySizeLimit            = rokuErr("body size limit exceeded")
+	ErrBodyValue                = rokuErr("body must contain a single JSON value")
 )
 
 type (
@@ -88,22 +94,35 @@ func newErrDesc(statusCode int, statusDesc string, message string) *ErrDesc {
 }
 
 func (e ErrInvalidHTTPStatus) Error() string {
+	if e.Res == nil {
+		return ""
+	}
+
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			return
+		}
+	}(e.Res.Body)
+
 	msg, err := io.ReadAll(e.Res.Body)
 	if err != nil {
 		return ""
 	}
+
 	errDesc := newErrDesc(e.Res.StatusCode, e.Res.Status, string(msg))
 	errDescJSON, err := json.Marshal(errDesc)
 	if err != nil {
 		return ""
 	}
+
 	return string(errDescJSON)
 }
 
 func (e ErrInvalidHTTPStatus) UnmarshalError() (ErrDesc, error) {
 	var errDesc ErrDesc
 
-	reader := bytes.NewReader([]byte(e.Error()))
+	reader := strings.NewReader(e.Error())
 	err := ReadJSON(reader, &errDesc)
 	if err != nil {
 		return ErrDesc{}, err
@@ -113,13 +132,11 @@ func (e ErrInvalidHTTPStatus) UnmarshalError() (ErrDesc, error) {
 }
 
 func GetErrorDesc(err error) ErrDesc {
-	if !errors.As(err, &ErrInvalidHTTPStatus{}) {
-		return ErrDesc{}
-	}
-
 	var errHTTP ErrInvalidHTTPStatus
 
-	errors.As(err, &errHTTP)
+	if !errors.As(err, &errHTTP) {
+		return ErrDesc{}
+	}
 
 	errorDesc, err := errHTTP.UnmarshalError()
 	if err != nil {
@@ -152,10 +169,19 @@ func FetchRx[T ReqI, U ResI](
 	deadline time.Duration,
 	backoffInterval time.Duration,
 	backoffRetries uint64,
-	statusCodeValidator func(res *http.Response) bool,
+	statusCodeValidator ...func(res *http.Response) bool,
 ) rxgo.Observable {
 	backOffCfg := backoff.NewExponentialBackOff()
 	backOffCfg.InitialInterval = backoffInterval
+
+	var validator func(res *http.Response) bool
+
+	switch statusCodeValidator {
+	case nil:
+		validator = defaultInvalidStatusCodeValidator
+	default:
+		validator = statusCodeValidator[0]
+	}
 
 	return rxgo.Defer([]rxgo.Producer{
 		func(_ context.Context, next chan<- rxgo.Item) {
@@ -167,7 +193,7 @@ func FetchRx[T ReqI, U ResI](
 				request,
 				headers,
 				deadline,
-				statusCodeValidator,
+				validator,
 			)
 			if err != nil {
 				next <- rxgo.Error(err)
@@ -188,13 +214,21 @@ func Fetch[T ReqI, U ResI](
 	request *T,
 	headers map[string]string,
 	deadline time.Duration,
-	statusCodeValidator func(res *http.Response) bool,
+	statusCodeValidator ...func(res *http.Response) bool,
 ) (*Envelope[U], error) {
 	var body U
 	var httpResponse *http.Response
 	var timer *time.Timer
 	var data []byte
 	var err error
+	var validator func(res *http.Response) bool
+
+	switch statusCodeValidator {
+	case nil:
+		validator = defaultInvalidStatusCodeValidator
+	default:
+		validator = statusCodeValidator[0]
+	}
 
 	reader, err := toBytesReader[T](request)
 	switch err {
@@ -208,12 +242,12 @@ func Fetch[T ReqI, U ResI](
 
 	switch reader {
 	case nil:
-		httpResponse, timer, err = httpCall(ctx, client, endpoint, headers, nil, deadline, method, statusCodeValidator)
+		httpResponse, timer, err = httpCall(ctx, client, endpoint, headers, nil, deadline, method, validator)
 		if err != nil {
 			return nil, err
 		}
 	default:
-		httpResponse, timer, err = httpCall(ctx, client, endpoint, headers, reader, deadline, method, statusCodeValidator)
+		httpResponse, timer, err = httpCall(ctx, client, endpoint, headers, reader, deadline, method, validator)
 		if err != nil {
 			return nil, err
 		}
@@ -296,7 +330,7 @@ func do(
 }
 
 // DefaultInvalidStatusCodeValidator validate all 4XX and 5XX error status codes
-func DefaultInvalidStatusCodeValidator(response *http.Response) bool {
+func defaultInvalidStatusCodeValidator(response *http.Response) bool {
 	return (response.StatusCode/100)/4 == 1 || (response.StatusCode/100)/5 == 1
 }
 
@@ -331,7 +365,9 @@ func To[T any](item rxgo.Item) (*T, error) {
 
 func readBody(timer *time.Timer, rc io.ReadCloser) (data []byte, err error) {
 	defer func(rc io.ReadCloser) {
-		err = rc.Close()
+		if e := rc.Close(); e != nil && err == nil {
+			err = e
+		}
 	}(rc)
 
 	if timer == nil {
