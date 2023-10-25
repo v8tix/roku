@@ -45,7 +45,7 @@ The Roku REST client provides a straightforward and simple interface for interac
   NewHTTPClient(
   	5*time.Second,
   	policy.OneRedirect,
-  	transport.IdleConnectionTimeout(ConnTimeOut),
+  	transport.IdleConnectionTimeout(roku.ConTimeOut),
   )
   ```` 
   <br>The OneRedirect and IdleConnectionTimeout functions are examples of how the Golang REST client can be configured and are part of Roku.<br>    
@@ -72,7 +72,7 @@ func FetchRx[T ReqI, U ResI](
   * FetchRx example:<br>
 
 ````
-  ch := FetchRx[CreateUserV1Req, GetUserEnvV1Res](
+  ch := roku.FetchRx[CreateUserV1Req, GetUserEnvV1Res](
           context.Background(),
           client,
           roku.Put,
@@ -92,10 +92,12 @@ func FetchRx[T ReqI, U ResI](
         return res.Body.User
       }
     default:
-      if errors.As(err, &ErrInvalidHTTPStatus{}) {
-        errDesc := roku.GetErrorDesc(err)
-        return fmt.Errorf("http error: %v", errDesc)      
-      }
+        var errHTTP roku.ErrInvalidHTTPStatus
+
+        if errors.As(err, &errHTTP) {
+            errDesc := roku.GetErrorDesc(errHTTP)
+            return fmt.Errorf("http error: %v", errDesc)      
+        }
   }
 ```` 
 * Notes about the example:<br>
@@ -134,10 +136,12 @@ func FetchRx[T ReqI, U ResI](
     case nil:
       return nil
     default:
-      if errors.As(err, &roku.ErrInvalidHttpStatus{}) {
-        errDesc := roku.GetErrorDesc(err)
-        return fmt.Errorf("http error: %v", errDesc)
-      }
+        var errHTTP roku.ErrInvalidHTTPStatus
+
+        if errors.As(err, &errHTTP) {
+            errDesc := roku.GetErrorDesc(errHTTP)
+            return fmt.Errorf("http error: %v", errDesc)      
+        }
   }
 ````
   * **deadline**: It enables FetchRx to block requests to the service, preventing both overloading and cascading failures.<br>
