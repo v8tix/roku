@@ -15,19 +15,13 @@ import (
 )
 
 const (
-	Get         = HTTPMethod("GET")
-	Post        = HTTPMethod("POST")
-	Put         = HTTPMethod("PUT")
-	Patch       = HTTPMethod("PATCH")
-	Delete      = HTTPMethod("DELETE")
-	ConnTimeOut = 15 * time.Second
+	Get        = HTTPMethod("GET")
+	Post       = HTTPMethod("POST")
+	Put        = HTTPMethod("PUT")
+	Patch      = HTTPMethod("PATCH")
+	Delete     = HTTPMethod("DELETE")
+	ConTimeOut = 15 * time.Second
 )
-
-type rokuErr string
-
-func (r rokuErr) Error() string {
-	return string(r)
-}
 
 var (
 	ErrTimeOut                  = rokuErr("timeout occurred")
@@ -65,6 +59,8 @@ type (
 		*http.Response
 	}
 
+	rokuErr string
+
 	ErrInvalidHTTPStatus struct {
 		Res *http.Response
 	}
@@ -79,6 +75,10 @@ type (
 func (nrq NoReq) Req() {}
 
 func (nrp NoRes) Res() {}
+
+func (r rokuErr) Error() string {
+	return string(r)
+}
 
 func newResponse[T ResI](body *T, res *http.Response) *Envelope[T] {
 	env := Envelope[T]{
@@ -131,13 +131,7 @@ func (e ErrInvalidHTTPStatus) UnmarshalError() (ErrDesc, error) {
 	return errDesc, nil
 }
 
-func GetErrorDesc(err error) ErrDesc {
-	var errHTTP ErrInvalidHTTPStatus
-
-	if !errors.As(err, &errHTTP) {
-		return ErrDesc{}
-	}
-
+func GetErrorDesc(errHTTP ErrInvalidHTTPStatus) ErrDesc {
 	errorDesc, err := errHTTP.UnmarshalError()
 	if err != nil {
 		return ErrDesc{}
@@ -335,16 +329,14 @@ func defaultInvalidStatusCodeValidator(response *http.Response) bool {
 }
 
 func toBytesReader[T any](value *T) (*bytes.Reader, error) {
-	switch value {
-	case nil:
+	if value == nil {
 		return nil, ErrNilValue
-	default:
-		data, err := json.Marshal(value)
-		if err != nil {
-			return nil, fmt.Errorf("%q: %w", err.Error(), ErrMarshallValue)
-		}
-		return bytes.NewReader(data), nil
 	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("%q: %w", err.Error(), ErrMarshallValue)
+	}
+	return bytes.NewReader(data), nil
 }
 
 func To[T any](item rxgo.Item) (*T, error) {

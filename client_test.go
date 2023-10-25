@@ -69,7 +69,7 @@ var (
 		return NewHTTPClient(
 			5*time.Second,
 			policy.OneRedirect,
-			transport.IdleConnectionTimeout(ConnTimeOut),
+			transport.IdleConnectionTimeout(ConTimeOut),
 		)
 	}()
 	customHeadersHTTPClient = func(headers middleware.CustomHeaders) *http.Client {
@@ -912,12 +912,14 @@ func TestFetchingWithNilBodyReturnsNotFoundErr(t *testing.T) {
 			case nil:
 				t.Fatal(err)
 			default:
+				var errHTTP ErrInvalidHTTPStatus
+
 				if got != nil {
 					t.Fatal(errors.New("envelop is not nil"))
 				}
 
-				if errors.As(err, &ErrInvalidHTTPStatus{}) {
-					errDesc := GetErrorDesc(err)
+				if errors.As(err, &errHTTP) {
+					errDesc := GetErrorDesc(errHTTP)
 					if errDesc.StatusCode != http.StatusNotFound {
 						t.Fatal(err)
 					}
@@ -1029,8 +1031,10 @@ func TestFetchingWithNonNilBodyReturnsNotFoundErr(t *testing.T) {
 					t.Fatal(errors.New("envelop is not nil"))
 				}
 
-				if errors.As(err, &ErrInvalidHTTPStatus{}) {
-					errProps := GetErrorDesc(err)
+				var errHTTP ErrInvalidHTTPStatus
+
+				if errors.As(err, &errHTTP) {
+					errProps := GetErrorDesc(errHTTP)
 					if errProps.StatusCode != http.StatusNotFound {
 						t.Fatal(err)
 					}
