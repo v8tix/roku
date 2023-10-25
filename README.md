@@ -42,10 +42,10 @@ The Roku REST client provides a straightforward and simple interface for interac
   
   * Example:<br>
   ````
-  NewHTTPClient(
+  httpClient := roku.NewHTTPClient(
   	5*time.Second,
   	policy.OneRedirect,
-  	transport.IdleConnectionTimeout(roku.ConTimeOut),
+  	transport.IdleConnectionTimeout(15*time.Second),
   )
   ```` 
   <br>The OneRedirect and IdleConnectionTimeout functions are examples of how the Golang REST client can be configured and are part of Roku.<br>    
@@ -74,7 +74,7 @@ func FetchRx[T ReqI, U ResI](
 ````
   ch := roku.FetchRx[CreateUserV1Req, GetUserEnvV1Res](
           context.Background(),
-          client,
+          httpClient,
           roku.Put,
           url,
           createUserV1Req,
@@ -121,7 +121,7 @@ func FetchRx[T ReqI, U ResI](
 ````
   ch:= roku.FetchRx[roku.NoReq, roku.NoRes](
     ctx,
-    r.client,
+    httpClient,
     roku.Delete,
     url,
     nil,
