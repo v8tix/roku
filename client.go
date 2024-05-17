@@ -10,6 +10,7 @@ import (
 	"github.com/reactivex/rxgo/v2"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -46,6 +47,10 @@ type (
 
 	ResI interface {
 		Res()
+	}
+
+	ReqURLI interface {
+		GetURLValues() url.Values
 	}
 
 	NoReq string
@@ -224,14 +229,9 @@ func Fetch[T ReqI, U ResI](
 		validator = statusCodeValidator[0]
 	}
 
-	reader, err := toBytesReader[T](request)
-	switch err {
-	case nil:
-		break
-	default:
-		if !errors.Is(err, ErrNilValue) {
-			return nil, err
-		}
+	reader, err := buildReader[T](request)
+	if err != nil {
+		return nil, err
 	}
 
 	switch reader {
@@ -431,4 +431,29 @@ func ReadJSON(body io.Reader, dst any) error {
 	}
 
 	return nil
+}
+
+func buildReader[T ReqI](request *T) (*bytes.Reader, error) {
+	switch any(request).(type) {
+
+	case ReqURLI:
+
+		values := any(request).(ReqURLI).GetURLValues()
+		reader := bytes.NewReader([]byte(values.Encode()))
+		return reader, nil
+
+	default:
+
+		reader, err := toBytesReader[T](request)
+		switch err {
+		case nil:
+			break
+		default:
+			if !errors.Is(err, ErrNilValue) {
+				return nil, err
+			}
+		}
+
+		return reader, nil
+	}
 }
