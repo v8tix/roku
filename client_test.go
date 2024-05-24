@@ -182,7 +182,7 @@ func TestFetchingWithClientHeadersReturnsClientHeaders(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			resp, _, err := httpCall(
+			resp, err := httpCall(
 				context.Background(),
 				tc.client,
 				tc.url,
@@ -241,7 +241,7 @@ func TestFetchingWithContextHeadersReturnsContextHeaders(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			resp, _, err := httpCall(
+			resp, err := httpCall(
 				context.Background(),
 				tc.client,
 				tc.url,
@@ -299,7 +299,7 @@ func TestFetchingSlowServerReturnsContextCanceledError(t *testing.T) {
 
 	for input, tc := range cases {
 		t.Run(input, func(t *testing.T) {
-			_, _, err := httpCall(
+			_, err := httpCall(
 				context.Background(),
 				tc.client,
 				tc.url,
