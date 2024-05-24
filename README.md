@@ -87,7 +87,7 @@ func FetchRx[T ReqI, U ResI](
   res, err := roku.To[roku.Envelope[GetUserEnvV1Res]](<-ch)
   switch err {
     case nil:
-      if &res.Body.User != nil {
+      if res.Body != nil {
         ...  
         return res.Body.User
       }
