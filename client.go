@@ -31,7 +31,6 @@ var (
 	ErrNonPointerOrWrongCasting = rokuErr("value is not a pointer or casting type is incorrect")
 	ErrEmptyItem                = rokuErr("item has no value and no error")
 	ErrNilValue                 = rokuErr("nil value provided")
-	ErrTimerNotSet              = rokuErr("timer must be set")
 	ErrBadlyJSON                = rokuErr("badly-formed JSON in the body")
 	ErrBadJSONType              = rokuErr("incorrect JSON type in the body")
 	ErrEmptyBody                = rokuErr("body must not be empty")
@@ -295,6 +294,16 @@ func do(
 		cancel()
 	})
 
+	defer func() {
+		// Ensure the timer is stopped to avoid the cancel function being called unnecessarily
+		if !timer.Stop() {
+			select {
+			case <-timer.C: // Drain the channel if the timer has already fired
+			default:
+			}
+		}
+	}()
+
 	request, err := http.NewRequestWithContext(withCancelCtx, string(method), url, body)
 	if err != nil {
 		return nil, nil, err
@@ -305,22 +314,19 @@ func do(
 	}
 
 	res, err = client.Do(request)
-	switch err {
-	case nil:
-
-		if statusCodeValidator(res) {
-			return nil, timer, ErrInvalidHTTPStatus{res}
-		}
-
-		return res, timer, nil
-
-	default:
+	if err != nil {
 
 		if errors.Is(err, context.Canceled) {
 			return nil, nil, fmt.Errorf("service at %q %w", request.URL, ErrTimeOut)
 		}
 		return nil, nil, err
 	}
+
+	if statusCodeValidator(res) {
+		return nil, timer, ErrInvalidHTTPStatus{res}
+	}
+
+	return res, timer, nil
 }
 
 // DefaultInvalidStatusCodeValidator validate all 4XX and 5XX error status codes
@@ -356,14 +362,24 @@ func To[T any](item rxgo.Item) (*T, error) {
 }
 
 func readBody(timer *time.Timer, rc io.ReadCloser) (data []byte, err error) {
-	defer func(rc io.ReadCloser) {
+	defer func(rc io.ReadCloser, timer *time.Timer) {
 		if e := rc.Close(); e != nil && err == nil {
 			err = e
 		}
-	}(rc)
+
+		if timer != nil {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		}
+
+	}(rc, timer)
 
 	if timer == nil {
-		return nil, ErrTimerNotSet
+		return io.ReadAll(rc)
 	}
 
 	buf := new(bytes.Buffer)
