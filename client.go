@@ -31,6 +31,7 @@ var (
 	ErrNonPointerOrWrongCasting = rokuErr("value is not a pointer or casting type is incorrect")
 	ErrEmptyItem                = rokuErr("item has no value and no error")
 	ErrNilValue                 = rokuErr("nil value provided")
+	ErrNilRequest               = rokuErr("nil request provided")
 	ErrBadlyJSON                = rokuErr("badly-formed JSON in the body")
 	ErrBadJSONType              = rokuErr("incorrect JSON type in the body")
 	ErrEmptyBody                = rokuErr("body must not be empty")
@@ -216,7 +217,6 @@ func Fetch[T ReqI, U ResI](
 ) (*Envelope[U], error) {
 	var body U
 	var httpResponse *http.Response
-	var timer *time.Timer
 	var data []byte
 	var err error
 	var validator func(res *http.Response) bool
@@ -235,19 +235,19 @@ func Fetch[T ReqI, U ResI](
 
 	switch reader {
 	case nil:
-		httpResponse, timer, err = httpCall(ctx, client, endpoint, headers, nil, deadline, method, validator)
+		httpResponse, err = httpCall(ctx, client, endpoint, headers, nil, deadline, method, validator)
 		if err != nil {
 			return nil, err
 		}
 	default:
-		httpResponse, timer, err = httpCall(ctx, client, endpoint, headers, reader, deadline, method, validator)
+		httpResponse, err = httpCall(ctx, client, endpoint, headers, reader, deadline, method, validator)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	if httpResponse.StatusCode != http.StatusNoContent {
-		data, err = readBody(timer, httpResponse.Body)
+		data, err = io.ReadAll(httpResponse.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -272,7 +272,7 @@ func httpCall(
 	deadline time.Duration,
 	method HTTPMethod,
 	statusCodeValidator func(res *http.Response) bool,
-) (*http.Response, *time.Timer, error) {
+) (*http.Response, error) {
 	return do(ctx, client, url, method, headers, body, deadline, statusCodeValidator)
 }
 
@@ -285,7 +285,7 @@ func do(
 	body io.Reader,
 	deadline time.Duration,
 	statusCodeValidator func(res *http.Response) bool,
-) (*http.Response, *time.Timer, error) {
+) (*http.Response, error) {
 	var res *http.Response
 	var err error
 
@@ -306,7 +306,7 @@ func do(
 
 	request, err := http.NewRequestWithContext(withCancelCtx, string(method), url, body)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	for k, v := range headers {
@@ -317,16 +317,16 @@ func do(
 	if err != nil {
 
 		if errors.Is(err, context.Canceled) {
-			return nil, nil, fmt.Errorf("service at %q %w", request.URL, ErrTimeOut)
+			return nil, fmt.Errorf("service at %q %w", request.URL, ErrTimeOut)
 		}
-		return nil, nil, err
+		return nil, err
 	}
 
 	if statusCodeValidator(res) {
-		return nil, timer, ErrInvalidHTTPStatus{res}
+		return nil, ErrInvalidHTTPStatus{Res: res}
 	}
 
-	return res, timer, nil
+	return res, nil
 }
 
 // DefaultInvalidStatusCodeValidator validate all 4XX and 5XX error status codes
@@ -361,87 +361,43 @@ func To[T any](item rxgo.Item) (*T, error) {
 	}
 }
 
-func readBody(timer *time.Timer, rc io.ReadCloser) (data []byte, err error) {
-	defer func(rc io.ReadCloser, timer *time.Timer) {
-		if e := rc.Close(); e != nil && err == nil {
-			err = e
-		}
-
-		if timer != nil {
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-		}
-
-	}(rc, timer)
-
-	if timer == nil {
-		return io.ReadAll(rc)
-	}
-
-	buf := new(bytes.Buffer)
-
-	for {
-		timer.Reset(10 * time.Millisecond)
-		_, err = io.CopyN(buf, rc, 256)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return nil, err
-		}
-	}
-
-	return buf.Bytes(), nil
-}
-
 func ReadJSON(body io.Reader, dst any) error {
 	dec := json.NewDecoder(body)
 	dec.DisallowUnknownFields()
 
-	err := dec.Decode(dst)
-	if err != nil {
-		var syntaxError *json.SyntaxError
-		var unmarshalTypeError *json.UnmarshalTypeError
-		var invalidUnmarshalError *json.InvalidUnmarshalError
-		var maxBytesError *http.MaxBytesError
+	if err := dec.Decode(dst); err != nil {
+		var (
+			syntaxError         *json.SyntaxError
+			unmarshalTypeError  *json.UnmarshalTypeError
+			invalidUnmarshalErr *json.InvalidUnmarshalError
+			maxBytesErr         *http.MaxBytesError
+		)
 
 		switch {
 		case errors.As(err, &syntaxError):
 			return fmt.Errorf("%w: at character %d", ErrBadlyJSON, syntaxError.Offset)
-
 		case errors.Is(err, io.ErrUnexpectedEOF):
-
 			return ErrBadlyJSON
-
 		case errors.As(err, &unmarshalTypeError):
 			if unmarshalTypeError.Field != "" {
 				return fmt.Errorf("%w for field %q", ErrBadJSONType, unmarshalTypeError.Field)
 			}
 			return fmt.Errorf("%w at character %d", ErrBadJSONType, unmarshalTypeError.Offset)
-
 		case errors.Is(err, io.EOF):
 			return ErrEmptyBody
-
 		case strings.HasPrefix(err.Error(), "json: unknown field "):
 			fieldName := strings.TrimPrefix(err.Error(), "json: unknown field ")
 			return fmt.Errorf("%w %s", ErrBodyUnknownKey, fieldName)
-
-		case errors.As(err, &maxBytesError):
-			return fmt.Errorf("%w. Max size is %d bytes", ErrBodySizeLimit, maxBytesError.Limit)
-
-		case errors.As(err, &invalidUnmarshalError):
+		case errors.As(err, &maxBytesErr):
+			return fmt.Errorf("%w. Max size is %d bytes", ErrBodySizeLimit, maxBytesErr.Limit)
+		case errors.As(err, &invalidUnmarshalErr):
 			panic(err)
-
 		default:
 			return err
 		}
 	}
 
-	err = dec.Decode(&struct{}{})
+	err := dec.Decode(&struct{}{})
 	if !errors.Is(err, io.EOF) {
 		return ErrBodyValue
 	}
@@ -450,26 +406,20 @@ func ReadJSON(body io.Reader, dst any) error {
 }
 
 func buildReader[T ReqI](request *T) (*bytes.Reader, error) {
-	switch any(request).(type) {
-
-	case ReqURLI:
-
-		values := any(request).(ReqURLI).GetURLValues()
-		reader := bytes.NewReader([]byte(values.Encode()))
-		return reader, nil
-
-	default:
-
-		reader, err := toBytesReader[T](request)
-		switch err {
-		case nil:
-			break
-		default:
-			if !errors.Is(err, ErrNilValue) {
-				return nil, err
-			}
-		}
-
-		return reader, nil
+	if reqURL, ok := any(request).(ReqURLI); ok {
+		values := reqURL.GetURLValues()
+		return bytes.NewReader([]byte(values.Encode())), nil
 	}
+
+	reader, err := toBytesReader[T](request)
+	switch err {
+	case nil:
+		break
+	default:
+		if !errors.Is(err, ErrNilValue) {
+			return nil, err
+		}
+	}
+
+	return reader, nil
 }
